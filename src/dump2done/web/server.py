@@ -167,6 +167,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
             except Exception as exc:
                 self._send_json({"status": "error", "message": str(exc)}, status=500)
             return
+        if parsed.path == "/api/delete-artifact":
+            try:
+                payload = self._read_json_body()
+                response = delete_artifact_request(self.output_root, payload)
+                self._send_json(response)
+            except ValueError as exc:
+                self._send_json({"status": "error", "message": str(exc)}, status=400)
+            except Exception as exc:
+                self._send_json({"status": "error", "message": str(exc)}, status=500)
+            return
         if parsed.path == "/api/console-log":
             try:
                 payload = self._read_json_body()
@@ -770,6 +780,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
     let activeJobId = SELECTED_JOB_ID || (jobs[0] && jobs[0].id);
     let eventSource = null;
     let uploadPreviewUrl = null;
+    let pendingDeleteId = "";
     const logLines = [
       "[dashboard] Booted Dump2Done local control plane on http://127.0.0.1:8765/",
       "[runner] Qualcomm profile loaded: CPU int8, single worker, ffmpeg libx264",
@@ -833,6 +844,11 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         audioLabel: "audio",
         audioHint: "點擊播放音訊",
         unavailablePreview: "不可預覽",
+        deleteArtifact: "刪除",
+        confirmDelete: "確認刪除",
+        cancelDelete: "取消",
+        deletePrompt: "確定移除這個產出物？檔案會移到 output/trash。",
+        deleteMoved: "已移到 output/trash。",
         noFile: "請先選擇圖片或影片。",
         readingFile: "讀取檔案中...",
         processing: "上傳並處理中...",
@@ -908,6 +924,11 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         audioLabel: "audio",
         audioHint: "Click to play audio",
         unavailablePreview: "Unavailable",
+        deleteArtifact: "Delete",
+        confirmDelete: "Confirm Delete",
+        cancelDelete: "Cancel",
+        deletePrompt: "Remove this output? The file will be moved to output/trash.",
+        deleteMoved: "Moved to output/trash.",
         noFile: "Choose an image or video first.",
         readingFile: "Reading file...",
         processing: "Uploading and processing...",
@@ -983,6 +1004,11 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         audioLabel: "音声",
         audioHint: "クリックして音声を再生",
         unavailablePreview: "プレビュー不可",
+        deleteArtifact: "削除",
+        confirmDelete: "削除を確認",
+        cancelDelete: "キャンセル",
+        deletePrompt: "この出力を削除しますか？ファイルは output/trash に移動します。",
+        deleteMoved: "output/trash に移動しました。",
         noFile: "先に画像または動画を選択してください。",
         readingFile: "ファイルを読み込み中...",
         processing: "アップロードして処理中...",
@@ -1218,10 +1244,12 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
             <div><dt class="font-bold text-slate-500">${escapeHtml(t("created"))}</dt><dd>${escapeHtml(item.createdAt)}</dd></div>
             <div><dt class="font-bold text-slate-500">${escapeHtml(t("resolution"))}</dt><dd>${escapeHtml(item.resolution)}</dd></div>
           </dl>
-          <div class="${compact ? "mt-3" : "mt-4"} grid grid-cols-2 gap-2">
+          <div class="${compact ? "mt-3" : "mt-4"} grid grid-cols-3 gap-2">
             ${primaryArtifactAction(item)}
             <button class="rounded-lg border border-lime-300/30 px-3 py-2 text-xs font-black text-lime-100 hover:bg-lime-300/10" onclick="openFolderById('${escapeAttr(item.id)}')"><i data-lucide="folder-open" class="mr-1 inline h-3 w-3"></i>${escapeHtml(t("openFolder"))}</button>
+            <button class="rounded-lg border border-red-300/30 px-3 py-2 text-xs font-black text-red-100 hover:bg-red-300/10" onclick="requestDeleteArtifact('${escapeAttr(item.id)}')"><i data-lucide="trash-2" class="mr-1 inline h-3 w-3"></i>${escapeHtml(t("deleteArtifact"))}</button>
           </div>
+          ${deleteConfirmation(item)}
         </article>
       `).join("");
     }
@@ -1563,6 +1591,58 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       }
     }
 
+    function requestDeleteArtifact(artifactId) {
+      pendingDeleteId = pendingDeleteId === artifactId ? "" : artifactId;
+      renderGallery();
+      lucide.createIcons();
+    }
+
+    function cancelDeleteArtifact() {
+      pendingDeleteId = "";
+      renderGallery();
+      lucide.createIcons();
+    }
+
+    function deleteConfirmation(item) {
+      if (pendingDeleteId !== item.id) return "";
+      return `
+        <div class="mt-3 rounded-lg border border-red-300/30 bg-red-300/10 p-3">
+          <p class="text-xs font-bold leading-5 text-red-100">${escapeHtml(t("deletePrompt"))}</p>
+          <div class="mt-3 grid grid-cols-2 gap-2">
+            <button class="rounded-lg border border-white/10 px-3 py-2 text-xs font-black text-slate-200 hover:bg-white/5" onclick="cancelDeleteArtifact()">${escapeHtml(t("cancelDelete"))}</button>
+            <button class="rounded-lg bg-red-300 px-3 py-2 text-xs font-black text-slate-950 hover:bg-red-200" onclick="deleteArtifactById('${escapeAttr(item.id)}')">${escapeHtml(t("confirmDelete"))}</button>
+          </div>
+        </div>
+      `;
+    }
+
+    async function deleteArtifactById(artifactId) {
+      const item = gallery.find(entry => entry.id === artifactId);
+      if (!item) {
+        appendLogLine(`[delete] Artifact not found: ${artifactId}`);
+        pendingDeleteId = "";
+        renderGallery();
+        return;
+      }
+      try {
+        const response = await fetch("/api/delete-artifact", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ job_id: item.jobId, path: item.relativePath })
+        });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.message || "Delete failed");
+        gallery = gallery.filter(entry => entry.id !== artifactId);
+        if (payload.gallery) gallery = [...payload.gallery].filter(isMediaGalleryItem);
+        pendingDeleteId = "";
+        appendLogLine(`[delete] ${payload.message || t("deleteMoved")} ${item.relativePath}`);
+        renderGallery();
+        refreshJobs().catch(error => appendLogLine(`[delete] refresh failed: ${error.message}`));
+      } catch (error) {
+        appendLogLine(`[delete] ${error.message}`);
+      }
+    }
+
     function galleryPreview(item) {
       const safeId = escapeAttr(item.id);
       const safeUrl = escapeAttr(item.mediaUrl || "");
@@ -1590,20 +1670,20 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         `;
       }
       return `
-        <button class="group relative ${previewSpacing} grid aspect-video w-full place-items-center overflow-hidden rounded-lg border border-white/10 bg-gradient-to-br ${galleryGradient(item.accent)} p-4 text-left" onclick="playArtifactById('${safeId}')" title="${safeName}">
+        <button class="group relative ${previewSpacing} grid aspect-video w-full place-items-center overflow-hidden rounded-lg border border-white/10 bg-gradient-to-br ${galleryGradient(item.accent)} px-4 py-5 text-left" onclick="playArtifactById('${safeId}')" title="${safeName}">
           <span class="absolute left-3 top-3 rounded-md bg-black/70 px-2 py-1 text-xs font-black text-white">${badge}</span>
-          <span class="grid gap-4 text-center">
-            <span class="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-black/45 text-lime-200 ring-1 ring-lime-300/30">
-              <i data-lucide="volume-2" class="h-7 w-7"></i>
+          <span class="grid gap-2 text-center">
+            <span class="mx-auto grid h-12 w-12 place-items-center rounded-2xl bg-black/45 text-lime-200 ring-1 ring-lime-300/30">
+              <i data-lucide="volume-2" class="h-6 w-6"></i>
             </span>
-            <span class="mx-auto flex h-12 items-end gap-1.5 rounded-xl bg-black/30 px-4 py-2">
-              <span class="audio-wave-bar h-8 w-2 rounded-full bg-lime-300"></span>
-              <span class="audio-wave-bar h-10 w-2 rounded-full bg-sky-300"></span>
-              <span class="audio-wave-bar h-6 w-2 rounded-full bg-orange-300"></span>
-              <span class="audio-wave-bar h-11 w-2 rounded-full bg-lime-200"></span>
-              <span class="audio-wave-bar h-7 w-2 rounded-full bg-sky-200"></span>
+            <span class="mx-auto flex h-10 items-end gap-1.5 rounded-xl bg-black/30 px-4 py-2">
+              <span class="audio-wave-bar h-6 w-2 rounded-full bg-lime-300"></span>
+              <span class="audio-wave-bar h-8 w-2 rounded-full bg-sky-300"></span>
+              <span class="audio-wave-bar h-5 w-2 rounded-full bg-orange-300"></span>
+              <span class="audio-wave-bar h-9 w-2 rounded-full bg-lime-200"></span>
+              <span class="audio-wave-bar h-6 w-2 rounded-full bg-sky-200"></span>
             </span>
-            <span class="text-sm font-black text-white">${escapeHtml(t("audioHint"))}</span>
+            <span class="rounded-md bg-black/55 px-2 py-1 text-xs font-black text-white">${escapeHtml(t("audioHint"))}</span>
           </span>
           <span class="absolute bottom-3 left-3 rounded-md bg-black/70 px-2 py-1 text-xs font-black text-white">${duration}</span>
         </button>
@@ -3236,6 +3316,55 @@ def open_folder_request(output_root: Path, payload: dict) -> dict:
         "message": message,
         "path": str(opened_target),
         "label": label,
+    }
+
+
+def delete_artifact_request(output_root: Path, payload: dict) -> dict:
+    job_id = str(payload.get("job_id") or "").strip()
+    relative_path = str(payload.get("path") or "").strip()
+    target = resolve_job_path(output_root, job_id, relative_path)
+    if not target or not target.exists() or not target.is_file():
+        raise ValueError("Artifact not found.")
+    job_dir = (output_root / sanitize_job_id(job_id)).resolve()
+    if not is_gallery_output_path(job_dir, target):
+        raise ValueError("Only produced media artifacts can be deleted from the gallery.")
+    if target.suffix.lower() not in {".mp4", ".mov", ".mkv", ".wav", ".png", ".jpg", ".jpeg", ".webp", ".bmp"}:
+        raise ValueError("Only image, video, and audio artifacts can be deleted.")
+
+    trash_root = (output_root.parent / "trash" / now_utc().replace(":", "").replace("-", "")).resolve()
+    trash_target = trash_root / sanitize_job_id(job_id) / relative_path.replace("/", os.sep).replace("\\", os.sep)
+    trash_target.parent.mkdir(parents=True, exist_ok=True)
+    counter = 2
+    while trash_target.exists():
+        trash_target = trash_target.with_name(f"{trash_target.stem}_{counter}{trash_target.suffix}")
+        counter += 1
+    shutil.move(str(target), str(trash_target))
+    metadata = {
+        "schema_version": "1.0",
+        "stage": "dashboard_delete",
+        "status": "moved_to_trash",
+        "created_at": now_utc(),
+        "job_id": job_id,
+        "original_relative_path": relative_path,
+        "trash_path": str(trash_target),
+    }
+    write_json_file(trash_target.with_suffix(trash_target.suffix + ".delete.json"), metadata)
+    persist_console_event(
+        {
+            "type": "delete_artifact",
+            "job_id": job_id,
+            "message": f"Moved artifact to trash: {relative_path}",
+            "path": str(trash_target),
+            "created_at": now_utc(),
+        }
+    )
+    return {
+        "status": "ok",
+        "message": "Moved artifact to trash.",
+        "job_id": job_id,
+        "path": relative_path,
+        "trash_path": str(trash_target),
+        "gallery": gallery_for_frontend(output_root),
     }
 
 
