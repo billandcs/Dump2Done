@@ -2810,7 +2810,9 @@ def render_env_dashboard(report: dict) -> str:
       </div>
       <div class="flex flex-wrap gap-2">
         <a href="/" class="rounded-xl border border-slate-700 bg-panel2 px-4 py-2 text-sm font-bold text-slate-200 hover:border-sky-400">Back to Dashboard</a>
-        <a href="/env?format=json" class="rounded-xl border border-lime-300/40 bg-lime-300/10 px-4 py-2 text-sm font-bold text-lime-200 hover:bg-lime-300/20">Raw JSON</a>
+        <button id="refreshEnv" class="rounded-xl border border-lime-300/40 bg-lime-300/10 px-4 py-2 text-sm font-bold text-lime-200 hover:bg-lime-300/20" type="button">
+          重新掃描即時數據
+        </button>
       </div>
     </header>
 
@@ -2821,6 +2823,11 @@ def render_env_dashboard(report: dict) -> str:
       __MEMORY_CARD__
       __DISK_CARD__
       __PYTHON_CARD__
+    </section>
+
+    <section class="mt-5 grid gap-5 lg:grid-cols-[1.1fr_1.4fr]">
+      __PRIORITY_SECTION__
+      __LOCAL_DEPLOYMENT_SECTION__
     </section>
 
     __ACTIVE_READINESS_SECTION__
@@ -2841,9 +2848,27 @@ def render_env_dashboard(report: dict) -> str:
       __AI_CARD__
       __RECOMMEND_CARD__
     </section>
+
+    <section class="mt-5 rounded-2xl border border-slate-800 bg-panel/70 p-4">
+      <details>
+        <summary class="cursor-pointer text-sm font-bold text-slate-400 hover:text-slate-200">
+          Debug JSON（通常不用看，給工程除錯）
+        </summary>
+        <p class="mt-2 text-xs leading-5 text-slate-500">Dashboard 已把重要資訊整理在上方；原始 JSON 只保留給開發時比對欄位。</p>
+        <a href="/env?format=json" class="mt-3 inline-flex rounded-lg border border-slate-700 px-3 py-2 text-xs font-bold text-slate-300 hover:border-lime-300/40 hover:text-lime-200">Open raw JSON</a>
+      </details>
+    </section>
   </main>
   <script>
     if (window.lucide) { window.lucide.createIcons(); }
+    const refresh = document.getElementById("refreshEnv");
+    if (refresh) {
+      refresh.addEventListener("click", () => {
+        refresh.textContent = "重新掃描中...";
+        refresh.disabled = true;
+        window.location.href = `/env?refresh=${Date.now()}`;
+      });
+    }
   </script>
 </body>
 </html>
@@ -2855,6 +2880,8 @@ def render_env_dashboard(report: dict) -> str:
         "__MEMORY_CARD__": progress_card("Memory Used", f"{memory_used:.0f}%", memory_used, "memory-stick", "lime" if memory_used < 70 else "orange"),
         "__DISK_CARD__": progress_card("Workspace Disk Used", f"{disk_used:.0f}%", disk_used, "hard-drive", "lime" if disk_used < 75 else "orange", f"{disk_free:.1f} GB free"),
         "__PYTHON_CARD__": env_summary_card("Python Runtime", basic.get("python", {}).get("version", "unknown"), "x64 emulation likely" if emulated else "native or non-ARM path", "terminal", "orange" if emulated else "lime"),
+        "__PRIORITY_SECTION__": env_priority_section(report),
+        "__LOCAL_DEPLOYMENT_SECTION__": local_deployment_section(report),
         "__ACTIVE_READINESS_SECTION__": active_readiness_section(report),
         "__SOFTWARE_CARDS__": software_cards,
         "__CPU_CARD__": detail_card("CPU / OS", "cpu", [
@@ -2965,6 +2992,191 @@ def readiness_card(title: str, readiness: dict, blockers: list, icon: str, tone:
       <h3 class="mt-5 text-xs font-bold uppercase tracking-wide text-slate-500">Blockers</h3>
       <ul class="mt-3 grid gap-2">{blocker_items}</ul>
     </article>
+    """
+
+
+def env_priority_section(report: dict) -> str:
+    qualcomm = report.get("qualcomm_platform", {})
+    basic = report.get("basic", {})
+    compute = report.get("compute", {})
+    disk = compute.get("disk", {})
+    memory = compute.get("memory", {})
+    ffmpeg = report.get("ffmpeg_codecs", {})
+    asr = report.get("asr", {})
+    llm = report.get("llm", {})
+
+    priorities = []
+    if qualcomm.get("likely_emulated_python"):
+        priorities.append(
+            (
+                "critical",
+                "改成 native ARM64 Python",
+                "目前很可能用 x64 Python 模擬層，這會拖慢 ASR、影像處理與 ONNX runtime。這是本機效能最優先項。",
+            )
+        )
+    priorities.append(
+        (
+            "ok" if basic.get("ffmpeg", {}).get("available") else "critical",
+            "確認 FFmpeg 本地渲染",
+            "影片輸出與音訊合成都依賴 FFmpeg；目前本機 runner 以 FFmpeg + libx264 作為穩定輸出路線。",
+        )
+    )
+    priorities.append(
+        (
+            "ok" if (memory.get("total_gb") or 0) >= 16 else "warn",
+            "記憶體與磁碟餘量",
+            f"即時記憶體使用率 {memory.get('percent_used', 'unknown')}%；工作區剩餘 {disk.get('cwd_free_gb', 'unknown')} GB。長影片處理會大量使用暫存與 cache。",
+        )
+    )
+    priorities.append(
+        (
+            "ok" if asr.get("faster_whisper_installed") else "warn",
+            "本地語音辨識",
+            "Faster-Whisper 是未來影片轉錄與剪輯理解的本地 ASR 基礎；尚未安裝時影片仍可做基本影像 runner，但不能做語音理解。",
+        )
+    )
+    priorities.append(
+        (
+            "ok" if llm.get("ollama_api", {}).get("available") else "future",
+            "本地 LLM / 任務規劃",
+            "Ollama 或相容端點未來負責 prompt 解析、剪輯計畫與 Agent 任務拆解。目前未連通不會阻塞基本圖片/影片輸出。",
+        )
+    )
+    if not ffmpeg.get("gpu_encoding_available"):
+        priorities.append(
+            (
+                "future",
+                "硬體編碼不是首要阻塞",
+                "這台 Qualcomm 本機先用 CPU libx264 驗證功能；QNN/DirectML/Media Foundation 加速應排在功能穩定後。",
+            )
+        )
+
+    items = "\n".join(priority_item(state, title, body) for state, title, body in priorities[:6])
+    return f"""
+    <article class="rounded-2xl border border-slate-800 bg-panel/95 p-5 shadow-xl">
+      <div class="mb-4 flex items-start justify-between gap-3">
+        <div>
+          <p class="text-xs font-bold uppercase tracking-wide text-orange-300">Priority</p>
+          <h2 class="mt-1 text-xl font-black">真正重要，優先處理</h2>
+        </div>
+        <i data-lucide="list-checks" class="h-6 w-6 text-orange-300"></i>
+      </div>
+      <div class="grid gap-3">{items}</div>
+    </article>
+    """
+
+
+def priority_item(state: str, title: str, body: str) -> str:
+    palette = {
+        "critical": ("border-orange-300/35 bg-orange-300/10", "text-orange-200", "circle-alert"),
+        "warn": ("border-yellow-300/30 bg-yellow-300/10", "text-yellow-200", "triangle-alert"),
+        "ok": ("border-lime-300/25 bg-lime-300/10", "text-lime-200", "check-circle-2"),
+        "future": ("border-sky-300/25 bg-sky-300/10", "text-sky-200", "clock-3"),
+    }.get(state, ("border-slate-700 bg-slate-950/60", "text-slate-200", "circle"))
+    return f"""
+    <div class="rounded-xl border {palette[0]} p-3">
+      <div class="flex items-start gap-3">
+        <i data-lucide="{palette[2]}" class="mt-0.5 h-4 w-4 shrink-0 {palette[1]}"></i>
+        <div>
+          <h3 class="text-sm font-black {palette[1]}">{html.escape(title)}</h3>
+          <p class="mt-1 text-xs leading-5 text-slate-400">{html.escape(body)}</p>
+        </div>
+      </div>
+    </div>
+    """
+
+
+def local_deployment_section(report: dict) -> str:
+    items = local_deployment_items(report)
+    rows = "\n".join(local_deployment_row(item) for item in items)
+    complete = sum(1 for item in items if item["state"] == "complete")
+    return f"""
+    <article class="rounded-2xl border border-slate-800 bg-panel/95 p-5 shadow-xl">
+      <div class="mb-4 flex items-start justify-between gap-3">
+        <div>
+          <p class="text-xs font-bold uppercase tracking-wide text-lime-300">Local Deployment</p>
+          <h2 class="mt-1 text-xl font-black">本地可部署能力清單</h2>
+          <p class="mt-1 text-xs leading-5 text-slate-500">列出 Dump2Done 未來可以在這台機器本地化的能力，並標記目前完成度。</p>
+        </div>
+        <span class="rounded-xl border border-lime-300/25 bg-lime-300/10 px-3 py-2 text-xs font-black text-lime-200">{complete}/{len(items)} complete</span>
+      </div>
+      <div class="grid gap-3 md:grid-cols-2">{rows}</div>
+    </article>
+    """
+
+
+def local_deployment_items(report: dict) -> list[dict[str, str]]:
+    basic = report.get("basic", {})
+    image = report.get("image_edit", {})
+    asr = report.get("asr", {})
+    llm = report.get("llm", {})
+    qualcomm = report.get("qualcomm_platform", {})
+    ffmpeg = report.get("ffmpeg_codecs", {})
+    return [
+        {
+            "name": "圖片本地編輯",
+            "state": "complete" if image.get("pillow_installed") else "missing",
+            "detail": "Pillow 已可處理旋轉、亮度、黑白、銳化並輸出圖片。" if image.get("pillow_installed") else "Pillow 未安裝，圖片功能會降級。",
+        },
+        {
+            "name": "影片本地 runner",
+            "state": "complete" if basic.get("ffmpeg", {}).get("available") else "missing",
+            "detail": "已接 FFmpeg 抽幀、Pillow 逐幀處理、MP4 合成輸出。" if basic.get("ffmpeg", {}).get("available") else "需要 FFmpeg 才能輸出影片。",
+        },
+        {
+            "name": "CPU 影片編碼",
+            "state": "complete" if ffmpeg.get("cpu_encoding_available") else "missing",
+            "detail": "libx264/libx265 可作為 Qualcomm 本機穩定輸出路線。",
+        },
+        {
+            "name": "本地 ASR",
+            "state": "complete" if asr.get("faster_whisper_installed") else "missing",
+            "detail": "Faster-Whisper 可做本地轉錄。" if asr.get("faster_whisper_installed") else "尚未安裝 Faster-Whisper；語音理解功能未完成。",
+        },
+        {
+            "name": "本地 LLM",
+            "state": "complete" if llm.get("ollama_api", {}).get("available") else "missing",
+            "detail": "Ollama API 可用，可作為未來 prompt planning 路線。" if llm.get("ollama_api", {}).get("available") else "Ollama API 未連通；目前不影響基本輸出。",
+        },
+        {
+            "name": "QNN / NPU 加速",
+            "state": "future" if qualcomm.get("is_qualcomm_cpu") else "blocked",
+            "detail": "偵測到 Qualcomm 平台，未來可評估 ONNX Runtime QNNExecutionProvider。" if qualcomm.get("is_qualcomm_cpu") else "非 Qualcomm 平台時不適用。",
+        },
+        {
+            "name": "DirectML 視覺模型",
+            "state": "complete" if qualcomm.get("directml_execution_provider_available") else "future",
+            "detail": "DirectML provider 可用。" if qualcomm.get("directml_execution_provider_available") else "未來可用於本地 segmentation/tracking fallback。",
+        },
+        {
+            "name": "人物/衣服追蹤",
+            "state": "future",
+            "detail": "目前是中央區域 deterministic MVP；真正衣服 segmentation + tracking 尚未完成。",
+        },
+    ]
+
+
+def local_deployment_row(item: dict[str, str]) -> str:
+    state = item.get("state", "future")
+    label_map = {
+        "complete": ("完成", "text-lime-200", "border-lime-300/25 bg-lime-300/10", "check"),
+        "missing": ("缺少", "text-orange-200", "border-orange-300/25 bg-orange-300/10", "circle-alert"),
+        "future": ("未來", "text-sky-200", "border-sky-300/25 bg-sky-300/10", "clock-3"),
+        "blocked": ("不適用", "text-slate-300", "border-slate-700 bg-slate-950/60", "minus-circle"),
+    }
+    label, text_class, shell_class, icon = label_map.get(state, label_map["future"])
+    return f"""
+    <div class="rounded-xl border {shell_class} p-3">
+      <div class="flex items-start justify-between gap-3">
+        <div>
+          <h3 class="text-sm font-black text-slate-100">{html.escape(item.get("name", ""))}</h3>
+          <p class="mt-1 text-xs leading-5 text-slate-400">{html.escape(item.get("detail", ""))}</p>
+        </div>
+        <span class="inline-flex shrink-0 items-center gap-1 rounded-md bg-black/25 px-2 py-1 text-[11px] font-black {text_class}">
+          <i data-lucide="{icon}" class="h-3 w-3"></i>{html.escape(label)}
+        </span>
+      </div>
+    </div>
     """
 
 
