@@ -52,6 +52,11 @@ DASHBOARD_DEFAULT_SETTINGS = {
     "autoPreviewOutput": False,
     "autoOpenOutputFolder": False,
     "galleryDensity": "comfortable",
+    "localLlmProvider": "ollama_demo",
+    "localLlmEndpoint": "http://127.0.0.1:11434",
+    "visionProvider": "local_pillow_mvp",
+    "asrProvider": "faster_whisper_cpu_demo",
+    "onlineFallbackPolicy": "warn_only",
 }
 
 TOOLTIPS = {
@@ -863,8 +868,8 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
   </div>
 
   <div id="settingsModal" class="fixed inset-0 z-50 hidden bg-black/80 p-5 backdrop-blur-sm">
-    <div class="mx-auto flex min-h-full max-w-xl items-center justify-center">
-      <div class="w-full rounded-xl border border-white/10 bg-[#080b10] shadow-2xl">
+    <div class="mx-auto flex min-h-full max-w-3xl items-center justify-center">
+      <div class="max-h-[92vh] w-full overflow-y-auto rounded-xl border border-white/10 bg-[#080b10] shadow-2xl">
         <div class="flex items-center justify-between border-b border-white/10 px-5 py-4">
           <div>
             <p class="text-xs font-black uppercase tracking-[0.22em] text-lime-300" data-i18n="settingsEyebrow">Settings</p>
@@ -901,6 +906,62 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
               <option value="compact" data-i18n="densityCompact">緊湊</option>
             </select>
           </label>
+          <section class="grid gap-4 rounded-xl border border-sky-300/20 bg-sky-300/[0.04] p-4">
+            <div class="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <div class="flex flex-wrap items-center gap-2">
+                  <h3 class="text-sm font-black text-sky-100" data-i18n="localComputeTitle">本地運算資源中心</h3>
+                  <span class="rounded-md border border-orange-300/35 bg-orange-300/10 px-2 py-1 text-[11px] font-black uppercase text-orange-200" data-i18n="demoBadge">Demo</span>
+                </div>
+                <p class="mt-2 text-xs leading-5 text-slate-400" data-i18n="localComputeHelp">這一區先是演示設定，用來規劃未來串接本地 LLM、影像模型、語音模型與線上 fallback。</p>
+              </div>
+              <i data-lucide="cpu" class="h-5 w-5 text-lime-300"></i>
+            </div>
+            <div class="rounded-lg border border-orange-300/25 bg-orange-300/[0.06] p-3">
+              <p class="text-xs font-black text-orange-200" data-i18n="onlineFeatureNoticeTitle">目前仍偏線上的能力</p>
+              <p class="mt-2 text-xs leading-5 text-slate-400" data-i18n="onlineFeatureNoticeBody">高品質生成式影片改衣服、精準人物/衣服 segmentation + tracking、複雜 Agent 規劃目前先標為線上能力；未來會逐步改成本地 Ollama / ONNX / DirectML / QNN 能跑的模組。</p>
+            </div>
+            <div class="grid gap-3 md:grid-cols-2">
+              <label class="grid gap-2">
+                <span class="text-xs font-black uppercase tracking-wide text-slate-400" data-i18n="localLlmProvider">Local LLM Provider</span>
+                <select id="localLlmProvider" class="h-11 rounded-lg border border-white/10 bg-black/40 px-3 text-sm text-slate-100 outline-none focus:border-sky-300/70">
+                  <option value="ollama_demo">Ollama local (demo)</option>
+                  <option value="openai_online_placeholder">OpenAI online fallback (placeholder)</option>
+                  <option value="none">None</option>
+                </select>
+              </label>
+              <label class="grid gap-2">
+                <span class="text-xs font-black uppercase tracking-wide text-slate-400" data-i18n="localLlmEndpoint">Local LLM Endpoint</span>
+                <input id="localLlmEndpoint" class="h-11 rounded-lg border border-white/10 bg-black/40 px-3 text-sm text-slate-100 outline-none focus:border-sky-300/70" placeholder="http://127.0.0.1:11434">
+              </label>
+              <label class="grid gap-2">
+                <span class="text-xs font-black uppercase tracking-wide text-slate-400" data-i18n="visionProvider">Vision / Video Provider</span>
+                <select id="visionProvider" class="h-11 rounded-lg border border-white/10 bg-black/40 px-3 text-sm text-slate-100 outline-none focus:border-sky-300/70">
+                  <option value="local_pillow_mvp">Local Pillow / FFmpeg MVP</option>
+                  <option value="onnx_directml_future">ONNX DirectML local future</option>
+                  <option value="qnn_future">Qualcomm QNN local future</option>
+                  <option value="online_video_edit_placeholder">Online video edit placeholder</option>
+                </select>
+              </label>
+              <label class="grid gap-2">
+                <span class="text-xs font-black uppercase tracking-wide text-slate-400" data-i18n="asrProvider">Speech / ASR Provider</span>
+                <select id="asrProvider" class="h-11 rounded-lg border border-white/10 bg-black/40 px-3 text-sm text-slate-100 outline-none focus:border-sky-300/70">
+                  <option value="faster_whisper_cpu_demo">Faster-Whisper CPU local</option>
+                  <option value="onnx_asr_future">ONNX ASR local future</option>
+                  <option value="online_asr_placeholder">Online ASR placeholder</option>
+                </select>
+              </label>
+            </div>
+            <label class="grid gap-2">
+              <span class="text-xs font-black uppercase tracking-wide text-slate-400" data-i18n="onlineFallbackPolicy">Online Fallback Policy</span>
+              <select id="onlineFallbackPolicy" class="h-11 rounded-lg border border-white/10 bg-black/40 px-3 text-sm text-slate-100 outline-none focus:border-orange-300/70">
+                <option value="warn_only" data-i18n="fallbackWarnOnly">只提示，不自動送線上</option>
+                <option value="disabled" data-i18n="fallbackDisabled">完全關閉線上 fallback</option>
+                <option value="ask_each_time" data-i18n="fallbackAskEachTime">每次詢問後才使用線上</option>
+              </select>
+              <span class="text-xs leading-5 text-slate-500" data-i18n="onlineFallbackHelp">演示設定：目前不會真的呼叫線上服務，只用來規劃未來任務路由。</span>
+            </label>
+          </section>
           <button id="openDefaultOutputFolder" class="rounded-lg border border-sky-300/30 px-4 py-3 text-sm font-black text-sky-100 hover:bg-sky-300/10" type="button">
             <i data-lucide="folder-open" class="mr-1 inline h-4 w-4"></i><span data-i18n="openDefaultOutputFolder">開啟預設資料夾</span>
           </button>
@@ -1022,7 +1083,21 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         settingsSaved: "設定已儲存。",
         settingsReset: "設定已重設。",
         settingsButtonLabel: "偏好設定",
-        imageOutputSettingsLabel: "設定圖片輸出資料夾"
+        imageOutputSettingsLabel: "設定圖片輸出資料夾",
+        localComputeTitle: "本地運算資源中心",
+        demoBadge: "演示",
+        localComputeHelp: "這一區先是演示設定，用來規劃未來串接本地 LLM、影像模型、語音模型與線上 fallback。",
+        onlineFeatureNoticeTitle: "目前仍偏線上的能力",
+        onlineFeatureNoticeBody: "高品質生成式影片改衣服、精準人物/衣服 segmentation + tracking、複雜 Agent 規劃目前先標為線上能力；未來會逐步改成本地 Ollama / ONNX / DirectML / QNN 能跑的模組。",
+        localLlmProvider: "Local LLM Provider",
+        localLlmEndpoint: "Local LLM Endpoint",
+        visionProvider: "Vision / Video Provider",
+        asrProvider: "Speech / ASR Provider",
+        onlineFallbackPolicy: "Online Fallback Policy",
+        fallbackWarnOnly: "只提示，不自動送線上",
+        fallbackDisabled: "完全關閉線上 fallback",
+        fallbackAskEachTime: "每次詢問後才使用線上",
+        onlineFallbackHelp: "演示設定：目前不會真的呼叫線上服務，只用來規劃未來任務路由。"
       },
       en: {
         localControlPlane: "Local Control Plane",
@@ -1106,7 +1181,21 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         settingsSaved: "Settings saved.",
         settingsReset: "Settings reset.",
         settingsButtonLabel: "Preferences",
-        imageOutputSettingsLabel: "Set image output folder"
+        imageOutputSettingsLabel: "Set image output folder",
+        localComputeTitle: "Local Compute Resource Center",
+        demoBadge: "Demo",
+        localComputeHelp: "Demo-only settings for future routing to local LLMs, vision models, speech models, and online fallback.",
+        onlineFeatureNoticeTitle: "Capabilities still leaning online",
+        onlineFeatureNoticeBody: "High-quality generative video recoloring, precise person/clothing segmentation + tracking, and complex Agent planning are marked as online capabilities for now; the roadmap is local Ollama / ONNX / DirectML / QNN modules.",
+        localLlmProvider: "Local LLM Provider",
+        localLlmEndpoint: "Local LLM Endpoint",
+        visionProvider: "Vision / Video Provider",
+        asrProvider: "Speech / ASR Provider",
+        onlineFallbackPolicy: "Online Fallback Policy",
+        fallbackWarnOnly: "Warn only, never auto-send online",
+        fallbackDisabled: "Disable online fallback",
+        fallbackAskEachTime: "Ask every time before online use",
+        onlineFallbackHelp: "Demo setting: no online service is called yet. This only shapes future task routing."
       },
       ja: {
         localControlPlane: "ローカル制御プレーン",
@@ -1190,7 +1279,21 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         settingsSaved: "設定を保存しました。",
         settingsReset: "設定をリセットしました。",
         settingsButtonLabel: "設定",
-        imageOutputSettingsLabel: "画像出力フォルダーを設定"
+        imageOutputSettingsLabel: "画像出力フォルダーを設定",
+        localComputeTitle: "ローカル計算リソース",
+        demoBadge: "Demo",
+        localComputeHelp: "将来のローカル LLM、Vision、音声モデル、オンライン fallback のルーティング用デモ設定です。",
+        onlineFeatureNoticeTitle: "現在はオンライン寄りの機能",
+        onlineFeatureNoticeBody: "高品質な生成式動画編集、人物/衣服 segmentation + tracking、複雑な Agent 計画は現在オンライン機能として扱い、将来 Ollama / ONNX / DirectML / QNN でローカル化します。",
+        localLlmProvider: "Local LLM Provider",
+        localLlmEndpoint: "Local LLM Endpoint",
+        visionProvider: "Vision / Video Provider",
+        asrProvider: "Speech / ASR Provider",
+        onlineFallbackPolicy: "Online Fallback Policy",
+        fallbackWarnOnly: "警告のみ、自動オンライン送信なし",
+        fallbackDisabled: "オンライン fallback を無効化",
+        fallbackAskEachTime: "オンライン利用前に毎回確認",
+        onlineFallbackHelp: "デモ設定：現時点ではオンラインサービスを呼び出しません。将来のタスクルーティング用です。"
       }
     };
     let currentLocale = localStorage.getItem("dump2done.locale") || "zh-Hant";
@@ -1198,7 +1301,12 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       defaultOutputDirectory: "output\\exports\\images",
       autoPreviewOutput: false,
       autoOpenOutputFolder: false,
-      galleryDensity: "comfortable"
+      galleryDensity: "comfortable",
+      localLlmProvider: "ollama_demo",
+      localLlmEndpoint: "http://127.0.0.1:11434",
+      visionProvider: "local_pillow_mvp",
+      asrProvider: "faster_whisper_cpu_demo",
+      onlineFallbackPolicy: "warn_only"
     };
     let userSettings = loadSettings();
 
@@ -1275,6 +1383,11 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       const autoPreview = document.getElementById("autoPreviewOutput");
       const autoOpen = document.getElementById("autoOpenOutputFolder");
       const density = document.getElementById("galleryDensity");
+      const localLlmProvider = document.getElementById("localLlmProvider");
+      const localLlmEndpoint = document.getElementById("localLlmEndpoint");
+      const visionProvider = document.getElementById("visionProvider");
+      const asrProvider = document.getElementById("asrProvider");
+      const onlineFallbackPolicy = document.getElementById("onlineFallbackPolicy");
       if (defaultOutput) defaultOutput.value = userSettings.defaultOutputDirectory;
       if (imageOutput && (!imageOutput.value || imageOutput.value === DEFAULT_SETTINGS.defaultOutputDirectory)) {
         imageOutput.value = userSettings.defaultOutputDirectory;
@@ -1282,6 +1395,11 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       if (autoPreview) autoPreview.checked = !!userSettings.autoPreviewOutput;
       if (autoOpen) autoOpen.checked = !!userSettings.autoOpenOutputFolder;
       if (density) density.value = userSettings.galleryDensity || DEFAULT_SETTINGS.galleryDensity;
+      if (localLlmProvider) localLlmProvider.value = userSettings.localLlmProvider || DEFAULT_SETTINGS.localLlmProvider;
+      if (localLlmEndpoint) localLlmEndpoint.value = userSettings.localLlmEndpoint || DEFAULT_SETTINGS.localLlmEndpoint;
+      if (visionProvider) visionProvider.value = userSettings.visionProvider || DEFAULT_SETTINGS.visionProvider;
+      if (asrProvider) asrProvider.value = userSettings.asrProvider || DEFAULT_SETTINGS.asrProvider;
+      if (onlineFallbackPolicy) onlineFallbackPolicy.value = userSettings.onlineFallbackPolicy || DEFAULT_SETTINGS.onlineFallbackPolicy;
     }
 
     function openSettingsModal() {
@@ -1494,7 +1612,12 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         defaultOutputDirectory: document.getElementById("defaultOutputDirectory").value.trim() || DEFAULT_SETTINGS.defaultOutputDirectory,
         autoPreviewOutput: document.getElementById("autoPreviewOutput").checked,
         autoOpenOutputFolder: document.getElementById("autoOpenOutputFolder").checked,
-        galleryDensity: document.getElementById("galleryDensity").value || DEFAULT_SETTINGS.galleryDensity
+        galleryDensity: document.getElementById("galleryDensity").value || DEFAULT_SETTINGS.galleryDensity,
+        localLlmProvider: document.getElementById("localLlmProvider").value || DEFAULT_SETTINGS.localLlmProvider,
+        localLlmEndpoint: document.getElementById("localLlmEndpoint").value.trim() || DEFAULT_SETTINGS.localLlmEndpoint,
+        visionProvider: document.getElementById("visionProvider").value || DEFAULT_SETTINGS.visionProvider,
+        asrProvider: document.getElementById("asrProvider").value || DEFAULT_SETTINGS.asrProvider,
+        onlineFallbackPolicy: document.getElementById("onlineFallbackPolicy").value || DEFAULT_SETTINGS.onlineFallbackPolicy
       };
       try {
         await saveSettingsToServer();
@@ -3441,6 +3564,30 @@ def load_dashboard_settings(output_root: Path) -> dict:
     settings["autoOpenOutputFolder"] = bool(settings.get("autoOpenOutputFolder"))
     if settings.get("galleryDensity") not in {"comfortable", "compact"}:
         settings["galleryDensity"] = "comfortable"
+    settings["localLlmProvider"] = coerce_choice(
+        settings.get("localLlmProvider"),
+        {"ollama_demo", "openai_online_placeholder", "none"},
+        "ollama_demo",
+    )
+    settings["localLlmEndpoint"] = coerce_short_text(
+        settings.get("localLlmEndpoint"),
+        DASHBOARD_DEFAULT_SETTINGS["localLlmEndpoint"],
+    )
+    settings["visionProvider"] = coerce_choice(
+        settings.get("visionProvider"),
+        {"local_pillow_mvp", "onnx_directml_future", "qnn_future", "online_video_edit_placeholder"},
+        "local_pillow_mvp",
+    )
+    settings["asrProvider"] = coerce_choice(
+        settings.get("asrProvider"),
+        {"faster_whisper_cpu_demo", "onnx_asr_future", "online_asr_placeholder"},
+        "faster_whisper_cpu_demo",
+    )
+    settings["onlineFallbackPolicy"] = coerce_choice(
+        settings.get("onlineFallbackPolicy"),
+        {"warn_only", "disabled", "ask_each_time"},
+        "warn_only",
+    )
     return settings
 
 
@@ -3455,8 +3602,44 @@ def save_dashboard_settings(output_root: Path, payload: dict) -> dict:
     settings["autoOpenOutputFolder"] = bool(payload.get("autoOpenOutputFolder"))
     density = str(payload.get("galleryDensity") or "comfortable")
     settings["galleryDensity"] = density if density in {"comfortable", "compact"} else "comfortable"
+    settings["localLlmProvider"] = coerce_choice(
+        payload.get("localLlmProvider"),
+        {"ollama_demo", "openai_online_placeholder", "none"},
+        "ollama_demo",
+    )
+    settings["localLlmEndpoint"] = coerce_short_text(
+        payload.get("localLlmEndpoint"),
+        DASHBOARD_DEFAULT_SETTINGS["localLlmEndpoint"],
+    )
+    settings["visionProvider"] = coerce_choice(
+        payload.get("visionProvider"),
+        {"local_pillow_mvp", "onnx_directml_future", "qnn_future", "online_video_edit_placeholder"},
+        "local_pillow_mvp",
+    )
+    settings["asrProvider"] = coerce_choice(
+        payload.get("asrProvider"),
+        {"faster_whisper_cpu_demo", "onnx_asr_future", "online_asr_placeholder"},
+        "faster_whisper_cpu_demo",
+    )
+    settings["onlineFallbackPolicy"] = coerce_choice(
+        payload.get("onlineFallbackPolicy"),
+        {"warn_only", "disabled", "ask_each_time"},
+        "warn_only",
+    )
     write_json_file(DASHBOARD_SETTINGS_PATH, settings)
     return {"status": "ok", "settings": settings, "path": str(DASHBOARD_SETTINGS_PATH)}
+
+
+def coerce_choice(value: object, allowed: set[str], default: str) -> str:
+    text = str(value or "")
+    return text if text in allowed else default
+
+
+def coerce_short_text(value: object, default: str, limit: int = 180) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return default
+    return text[:limit]
 
 
 def image_resolution(path: Path) -> str:
