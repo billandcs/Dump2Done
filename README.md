@@ -4,6 +4,29 @@ Dump2Done is a local-first AI media editing control dashboard for short-form vid
 
 The current project is an active MVP, not a finished commercial editor. It can run a local web dashboard, inspect the machine environment, upload images/videos, produce deterministic local image/video outputs, and route generative image requests to real providers when those providers are available.
 
+## Product Direction
+
+Dump2Done is designed around a local-first migration path.
+
+The long-term goal is that part, most, or eventually all media AI work can run on the user's own machine when local hardware and models are ready. Cloud services are treated as optional bridges, not the default center of the product. The UI and backend should therefore keep provider routing flexible:
+
+- prefer local execution when a local provider is available
+- expose cloud providers as explicit fallback choices
+- show why a local route is not ready yet
+- let users gradually move from cloud to local without changing the whole workflow
+- keep artifacts, settings, and provider decisions visible enough for debugging
+
+Current local-first layers:
+
+| Layer | Local-first target | Temporary fallback |
+| --- | --- | --- |
+| Image filters | Pillow | None needed |
+| Generative images | Automatic1111 / ComfyUI / local diffusion | OpenAI Images API |
+| Video analysis/render | FFmpeg CPU baseline | Future remote worker for heavy workloads |
+| Video segmentation/tracking | ONNX Runtime DirectML/QNN, later local models | Online or remote model only when explicitly enabled |
+| ASR | Faster-Whisper CPU, later ONNX/accelerated local ASR | Online ASR only when explicitly enabled |
+| LLM planning | Ollama or OpenAI-compatible local endpoint | OpenAI/remote LLM only when explicitly enabled |
+
 ## Current Status
 
 | Area | Status | Notes |
@@ -45,6 +68,7 @@ The dashboard includes:
 - SSE console log
 - output gallery with preview/play/delete/open-folder actions
 - settings panel for local/cloud provider routing
+- local-first provider migration settings
 - Traditional Chinese default UI, with English/Japanese language switching
 
 ### Environment Dashboard
@@ -102,7 +126,7 @@ Dump2Done now routes these requests to real providers:
 2. ComfyUI readiness check
 3. OpenAI Images API
 
-If none are available, the dashboard reports the real blocker instead of copying the original image and pretending it succeeded.
+The intended order is local first. If no local route is ready, the dashboard reports the real blocker instead of copying the original image and pretending it succeeded. OpenAI Images API is an optional cloud fallback, not the default product direction.
 
 #### Automatic1111 Local Route
 
@@ -233,6 +257,8 @@ Future platform routes:
 - AMD DirectML / ROCm route
 - remote/cloud worker route for heavier models
 
+The migration rule is simple: add the cloud route only when it helps users keep working, but keep the same job/artifact shape so the route can later be replaced by a local model.
+
 ## Known Limitations
 
 - Cat-to-dog requires a real generative image provider. Pillow cannot do it.
@@ -258,10 +284,12 @@ output/                              Local generated jobs, reports, logs, export
 
 ## Roadmap
 
+- Make provider health visible in the settings panel: local ready, missing model, missing API key, cloud disabled.
 - Add ComfyUI workflow JSON configuration and queue submission.
 - Add local model install/readiness guide for Stable Diffusion or FLUX on Windows.
-- Add provider health cards to the settings modal.
 - Add true segmentation/tracking backend for clothing/person edits.
 - Add ONNX Runtime DirectML/QNN experiments for Qualcomm local acceleration.
+- Add local LLM planning through Ollama/OpenAI-compatible local endpoints.
+- Add local ASR acceleration experiments.
 - Add richer job retry/resume controls.
 - Split web templates out of `server.py` once the UI stabilizes.

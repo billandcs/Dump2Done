@@ -1001,9 +1001,9 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
               <div>
                 <div class="flex flex-wrap items-center gap-2">
                   <h3 class="text-sm font-black text-sky-100" data-i18n="localComputeTitle">本地運算資源中心</h3>
-                  <span class="rounded-md border border-orange-300/35 bg-orange-300/10 px-2 py-1 text-[11px] font-black uppercase text-orange-200" data-i18n="demoBadge">Demo</span>
+                  <span class="rounded-md border border-lime-300/35 bg-lime-300/10 px-2 py-1 text-[11px] font-black uppercase text-lime-200" data-i18n="demoBadge">Local-first</span>
                 </div>
-                <p class="mt-2 text-xs leading-5 text-slate-400" data-i18n="localComputeHelp">這一區先是演示設定，用來規劃未來串接本地 LLM、影像模型、語音模型與線上 fallback。</p>
+                <p class="mt-2 text-xs leading-5 text-slate-400" data-i18n="localComputeHelp">這一區是本地優先遷移策略：能本地跑就先走本地；雲端只作為明確可控的 fallback。</p>
               </div>
               <i data-lucide="cpu" class="h-5 w-5 text-lime-300"></i>
             </div>
@@ -1022,8 +1022,8 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
                   <button class="compute-help grid h-5 w-5 place-items-center rounded-full border border-sky-300/35 bg-sky-300/10 text-[11px] font-black text-sky-100 hover:bg-sky-300/20" type="button" data-help-key="localLlmProviderHelp">?</button>
                 </span>
                 <select id="localLlmProvider" class="h-11 rounded-lg border border-white/10 bg-black/40 px-3 text-sm text-slate-100 outline-none focus:border-sky-300/70">
-                  <option value="ollama_demo">Ollama local (demo)</option>
-                  <option value="openai_online_placeholder">OpenAI online fallback (placeholder)</option>
+                  <option value="ollama_demo">Ollama local planning</option>
+                  <option value="openai_online_placeholder">OpenAI online fallback</option>
                   <option value="none">None</option>
                 </select>
               </label>
@@ -1041,9 +1041,9 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
                 </span>
                 <select id="visionProvider" class="h-11 rounded-lg border border-white/10 bg-black/40 px-3 text-sm text-slate-100 outline-none focus:border-sky-300/70">
                   <option value="local_pillow_mvp">Local Pillow / FFmpeg MVP</option>
-                  <option value="onnx_directml_future">ONNX DirectML local future</option>
-                  <option value="qnn_future">Qualcomm QNN local future</option>
-                  <option value="online_video_edit_placeholder">Online video edit placeholder</option>
+                  <option value="onnx_directml_future">ONNX DirectML local target</option>
+                  <option value="qnn_future">Qualcomm QNN local target</option>
+                  <option value="online_video_edit_placeholder">Online fallback only</option>
                 </select>
               </label>
               <label class="grid gap-2">
@@ -1067,8 +1067,8 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
                 </span>
                 <select id="asrProvider" class="h-11 rounded-lg border border-white/10 bg-black/40 px-3 text-sm text-slate-100 outline-none focus:border-sky-300/70">
                   <option value="faster_whisper_cpu_demo">Faster-Whisper CPU local</option>
-                  <option value="onnx_asr_future">ONNX ASR local future</option>
-                  <option value="online_asr_placeholder">Online ASR placeholder</option>
+                  <option value="onnx_asr_future">ONNX ASR local target</option>
+                  <option value="online_asr_placeholder">Online ASR fallback</option>
                 </select>
               </label>
             </div>
@@ -1082,7 +1082,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
                 <option value="disabled" data-i18n="fallbackDisabled">完全關閉線上 fallback</option>
                 <option value="ask_each_time" data-i18n="fallbackAskEachTime">每次詢問後才使用線上</option>
               </select>
-              <span class="text-xs leading-5 text-slate-500" data-i18n="onlineFallbackHelp">演示設定：目前不會真的呼叫線上服務，只用來規劃未來任務路由。</span>
+              <span class="text-xs leading-5 text-slate-500" data-i18n="onlineFallbackHelp">本地優先策略：只有在本地 provider 不足且你允許時，才把任務交給線上 fallback。</span>
             </label>
           </section>
           <button id="openDefaultOutputFolder" class="rounded-lg border border-sky-300/30 px-4 py-3 text-sm font-black text-sky-100 hover:bg-sky-300/10" type="button">
@@ -1266,10 +1266,10 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         settingsButtonLabel: "偏好設定",
         imageOutputSettingsLabel: "設定圖片輸出資料夾",
         localComputeTitle: "本地運算資源中心",
-        demoBadge: "演示",
-        localComputeHelp: "這一區先是演示設定，用來規劃未來串接本地 LLM、影像模型、語音模型與線上 fallback。",
+        demoBadge: "本地優先",
+        localComputeHelp: "這一區是本地優先遷移策略：能本地跑就先走本地；雲端只作為明確可控的 fallback，讓使用者逐步切回自己的運算資源。",
         onlineFeatureNoticeTitle: "目前仍偏線上的能力",
-        onlineFeatureNoticeBody: "高品質生成式影片改衣服、精準人物/衣服 segmentation + tracking、複雜 Agent 規劃目前先標為線上能力；未來會逐步改成本地 Ollama / ONNX / DirectML / QNN 能跑的模組。",
+        onlineFeatureNoticeBody: "高品質生成式影片改衣服、精準人物/衣服 segmentation + tracking、複雜 Agent 規劃目前可能需要外部服務；設計目標是逐步替換成本地 Ollama / diffusion / ONNX / DirectML / QNN 模組。",
         localLlmProvider: "Local LLM Provider",
         localLlmEndpoint: "Local LLM Endpoint",
         visionProvider: "Vision / Video Provider",
@@ -1280,16 +1280,16 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         fallbackWarnOnly: "只提示，不自動送線上",
         fallbackDisabled: "完全關閉線上 fallback",
         fallbackAskEachTime: "每次詢問後才使用線上",
-        onlineFallbackHelp: "演示設定：目前不會真的呼叫線上服務，只用來規劃未來任務路由。",
+        onlineFallbackHelp: "本地優先策略：只有在本地 provider 不足且你允許時，才把任務交給線上 fallback。",
         computeHelpPanelTitle: "設定說明",
         computeHelpDefault: "點擊欄位標題旁的問號，可以查看各項本地/線上運算設定的差別與未來用途。",
         helpButtonLabel: "查看此設定說明",
-        localLlmProviderHelp: "決定文字理解、任務規劃、prompt 解析要交給誰。Ollama local 代表未來走本機 LLM；OpenAI online fallback 代表遇到本機模型做不到的語意規劃時，先提示再考慮線上；None 則關閉這類 LLM 路由。目前是演示，不會真的呼叫模型。",
+        localLlmProviderHelp: "決定文字理解、任務規劃、prompt 解析要交給誰。Ollama local 是本地優先路線；OpenAI online fallback 只在本地模型不足且你允許時作為過渡；None 則關閉這類 LLM 路由。",
         localLlmEndpointHelp: "本地 LLM 服務網址，例如 Ollama 預設是 http://127.0.0.1:11434。未來後端會用它檢查模型列表、送出結構化 prompt、取得剪輯或編輯計畫。現在只保存設定，不會主動連線。",
-        visionProviderHelp: "決定圖片/影片視覺處理走哪條路。Local Pillow / FFmpeg MVP 是目前已能本地輸出的基礎版；ONNX DirectML 與 Qualcomm QNN 是未來把 segmentation、tracking、影像模型搬到本機 GPU/NPU 的路線；Online video edit placeholder 代表高品質生成式影片編輯目前仍偏線上。",
+        visionProviderHelp: "決定圖片/影片視覺處理走哪條路。Local Pillow / FFmpeg MVP 是目前已能本地輸出的基礎版；ONNX DirectML 與 Qualcomm QNN 是本地化目標，會逐步承接 segmentation、tracking、影像模型。線上路線只作為明確 fallback。",
         automatic1111EndpointHelp: "本地 Stable Diffusion WebUI API 位址。若你啟動 AUTOMATIC1111 並開啟 --api，Dump2Done 會用 /sdapi/v1/img2img 做貓變狗、物件替換等 image-to-image。這是目前最實際的本地生成式圖片路線。",
         openaiImageModelHelp: "OpenAI Images API 的模型名稱。需要環境變數 OPENAI_API_KEY；ChatGPT Pro 不會自動等於 API key。雲端路線適合本機 diffusion 尚未部署時使用。",
-        asrProviderHelp: "決定語音辨識來源。Faster-Whisper CPU local 是目前可在本機跑的路線；ONNX ASR future 是未來優化到本地加速後端；Online ASR placeholder 代表雲端備援。差別在速度、隱私、模型品質與硬體需求。",
+        asrProviderHelp: "決定語音辨識來源。Faster-Whisper CPU local 是目前可在本機跑的路線；ONNX ASR 是本地加速目標；Online ASR fallback 只在本地資源不足且你允許時使用。差別在速度、隱私、模型品質與硬體需求。",
         onlineFallbackPolicyHelp: "控制遇到本地資源做不到時是否可使用線上服務。只提示代表系統只告知需要線上能力，不會自動送出；完全關閉代表永遠不走線上；每次詢問代表未來需要你確認後才會送出。"
       },
       en: {
@@ -1430,10 +1430,10 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         settingsButtonLabel: "Preferences",
         imageOutputSettingsLabel: "Set image output folder",
         localComputeTitle: "Local Compute Resource Center",
-        demoBadge: "Demo",
-        localComputeHelp: "Demo-only settings for future routing to local LLMs, vision models, speech models, and online fallback.",
+        demoBadge: "Local-first",
+        localComputeHelp: "This is the local-first migration strategy: use local providers whenever possible, keep cloud as an explicit fallback, and let users gradually move work back onto their own machine.",
         onlineFeatureNoticeTitle: "Capabilities still leaning online",
-        onlineFeatureNoticeBody: "High-quality generative video recoloring, precise person/clothing segmentation + tracking, and complex Agent planning are marked as online capabilities for now; the roadmap is local Ollama / ONNX / DirectML / QNN modules.",
+        onlineFeatureNoticeBody: "High-quality generative video recoloring, precise person/clothing segmentation + tracking, and complex Agent planning may need external services today. The design goal is to replace them gradually with local Ollama, diffusion, ONNX, DirectML, and QNN modules.",
         localLlmProvider: "Local LLM Provider",
         localLlmEndpoint: "Local LLM Endpoint",
         visionProvider: "Vision / Video Provider",
@@ -1444,16 +1444,16 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         fallbackWarnOnly: "Warn only, never auto-send online",
         fallbackDisabled: "Disable online fallback",
         fallbackAskEachTime: "Ask every time before online use",
-        onlineFallbackHelp: "Demo setting: no online service is called yet. This only shapes future task routing.",
+        onlineFallbackHelp: "Local-first policy: online fallback is used only when a local provider is not enough and you explicitly allow it.",
         computeHelpPanelTitle: "Setting Help",
         computeHelpDefault: "Click the question mark next to a label to see what each local/online compute setting means.",
         helpButtonLabel: "Show help for this setting",
-        localLlmProviderHelp: "Chooses who handles text reasoning, task planning, and prompt parsing. Ollama local means a future local LLM route; OpenAI online fallback means online help can be suggested when local planning is not enough; None disables this LLM route. This is demo-only for now.",
+        localLlmProviderHelp: "Chooses who handles text reasoning, task planning, and prompt parsing. Ollama local is the local-first route; OpenAI online fallback is a bridge only when local planning is not enough and you allow it; None disables this LLM route.",
         localLlmEndpointHelp: "The local LLM service URL. Ollama commonly uses http://127.0.0.1:11434. Later the backend can use this to inspect models, send structured prompts, and receive edit plans. For now it is only saved.",
-        visionProviderHelp: "Chooses the image/video processing route. Local Pillow / FFmpeg MVP is the current local output path. ONNX DirectML and Qualcomm QNN are future local GPU/NPU acceleration paths for segmentation, tracking, and vision models. Online video edit placeholder means high-quality generative video editing is still online-leaning.",
+        visionProviderHelp: "Chooses the image/video processing route. Local Pillow / FFmpeg MVP is the current local output path. ONNX DirectML and Qualcomm QNN are local migration targets for segmentation, tracking, and vision models. Online routes are explicit fallback only.",
         automatic1111EndpointHelp: "Local Stable Diffusion WebUI API URL. If AUTOMATIC1111 is running with --api, Dump2Done calls /sdapi/v1/img2img for cat-to-dog, object replacement, and other image-to-image edits. This is the most practical local generative image route right now.",
         openaiImageModelHelp: "OpenAI Images API model name. Requires OPENAI_API_KEY in the environment; ChatGPT Pro does not automatically provide an API key. The cloud route is useful when local diffusion is not deployed yet.",
-        asrProviderHelp: "Chooses the speech recognition route. Faster-Whisper CPU local is the current local option; ONNX ASR future is a future accelerated local backend; Online ASR placeholder is cloud fallback. The tradeoffs are speed, privacy, quality, and hardware needs.",
+        asrProviderHelp: "Chooses the speech recognition route. Faster-Whisper CPU local is the current local option; ONNX ASR is the local acceleration target; Online ASR fallback is used only when local resources are not enough and you allow it. The tradeoffs are speed, privacy, quality, and hardware needs.",
         onlineFallbackPolicyHelp: "Controls whether online services may be used when local resources cannot complete a task. Warn only never auto-sends; disabled blocks online fallback; ask each time means future online use requires your confirmation."
       },
       ja: {
@@ -1594,8 +1594,8 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         settingsButtonLabel: "設定",
         imageOutputSettingsLabel: "画像出力フォルダーを設定",
         localComputeTitle: "ローカル計算リソース",
-        demoBadge: "Demo",
-        localComputeHelp: "将来のローカル LLM、Vision、音声モデル、オンライン fallback のルーティング用デモ設定です。",
+        demoBadge: "Local-first",
+        localComputeHelp: "ローカル優先の移行戦略です。可能な限りローカル provider を使い、クラウドは明示的な fallback として扱い、少しずつ処理を自分のマシンへ戻します。",
         onlineFeatureNoticeTitle: "現在はオンライン寄りの機能",
         onlineFeatureNoticeBody: "高品質な生成式動画編集、人物/衣服 segmentation + tracking、複雑な Agent 計画は現在オンライン機能として扱い、将来 Ollama / ONNX / DirectML / QNN でローカル化します。",
         localLlmProvider: "Local LLM Provider",
@@ -1612,13 +1612,13 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         computeHelpPanelTitle: "設定ヘルプ",
         computeHelpDefault: "ラベル横の ? をクリックすると、各ローカル/オンライン計算設定の意味を確認できます。",
         helpButtonLabel: "この設定の説明を見る",
-        localLlmProviderHelp: "テキスト理解、タスク計画、prompt 解析をどこで処理するかを決めます。Ollama local は将来のローカル LLM ルート、OpenAI online fallback はローカルで不足する場合のオンライン候補、None は LLM ルート無効です。現在はデモです。",
+        localLlmProviderHelp: "テキスト理解、タスク計画、prompt 解析をどこで処理するかを決めます。Ollama local はローカル優先ルート、OpenAI online fallback はローカルで不足し許可された場合の過渡的な候補、None は LLM ルート無効です。",
         localLlmEndpointHelp: "ローカル LLM サービスの URL です。Ollama は通常 http://127.0.0.1:11434 を使います。将来はモデル一覧確認、構造化 prompt、編集計画の取得に使います。今は保存のみです。",
-        visionProviderHelp: "画像/動画処理ルートを決めます。Local Pillow / FFmpeg MVP は現在のローカル出力ルート。ONNX DirectML と Qualcomm QNN は segmentation、tracking、Vision モデルをローカル GPU/NPU へ移す将来ルート。Online video edit placeholder は高品質生成式動画編集がまだオンライン寄りであることを示します。",
+        visionProviderHelp: "画像/動画処理ルートを決めます。Local Pillow / FFmpeg MVP は現在のローカル出力ルート。ONNX DirectML と Qualcomm QNN は segmentation、tracking、Vision モデルをローカル GPU/NPU へ移す目標です。オンラインは明示的な fallback として扱います。",
         automatic1111EndpointHelp: "ローカル Stable Diffusion WebUI API の URL です。AUTOMATIC1111 を --api 付きで起動すると、Dump2Done は /sdapi/v1/img2img で猫を犬にする、物体置換などの image-to-image 編集を行います。現時点で最も現実的なローカル生成式画像ルートです。",
         openaiImageModelHelp: "OpenAI Images API のモデル名です。環境変数 OPENAI_API_KEY が必要です。ChatGPT Pro は API key とは別です。ローカル diffusion が未導入の場合のクラウドルートです。",
-        asrProviderHelp: "音声認識ルートを決めます。Faster-Whisper CPU local は現在のローカル選択肢、ONNX ASR future は将来の高速化ローカル backend、Online ASR placeholder はクラウド fallback です。速度、プライバシー、品質、必要ハードウェアが違います。",
-        onlineFallbackPolicyHelp: "ローカル資源だけではできない場合にオンラインサービスを使えるかを制御します。警告のみは自動送信なし、無効化はオンライン禁止、毎回確認は将来オンライン利用前に確認します。"
+        asrProviderHelp: "音声認識ルートを決めます。Faster-Whisper CPU local は現在のローカル選択肢、ONNX ASR はローカル高速化目標、Online ASR fallback はローカル資源が足りず許可された場合のみ使います。速度、プライバシー、品質、必要ハードウェアが違います。",
+        onlineFallbackPolicyHelp: "ローカル資源だけではできない場合にオンラインサービスを使えるかを制御します。警告のみは自動送信なし、無効化はオンライン禁止、毎回確認はオンライン利用前に確認します。"
       }
     };
     let currentLocale = localStorage.getItem("dump2done.locale") || "zh-Hant";
