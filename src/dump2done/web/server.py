@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
+import contextlib
 import html
 import json
 import mimetypes
 import os
+import queue
 import uuid
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -22,6 +25,8 @@ STAGE_LABELS = [
     ("subtitle", "字幕"),
     ("render", "輸出"),
 ]
+
+PIPELINE_EVENT_QUEUE: queue.Queue[dict] = queue.Queue()
 
 TOOLTIPS = {
     "Qualcomm Q1": "這代表目前這台機器是 Qualcomm 平台，適合先用 CPU int8 跑本地 MVP，未來再評估 QNN/DirectML 加速。Q1 不是效能分數滿分，而是「可開發、待加速優化」。",
@@ -54,6 +59,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if parsed.path == "/":
             query = parse_qs(parsed.query)
             self._send_html(render_index(self.output_root, query.get("job", [None])[0]))
+            return
+        if parsed.path == "/api/stream-logs":
+            query = parse_qs(parsed.query)
+            self._send_sse(stream_pipeline_events(self.output_root, query.get("job", [""])[0]))
             return
         if parsed.path == "/api/jobs":
             self._send_json({"jobs": jobs_for_frontend(self.output_root)})
@@ -136,6 +145,29 @@ class DashboardHandler(BaseHTTPRequestHandler):
             raise ValueError("Expected JSON object.")
         return data
 
+    def _send_sse(self, generator) -> None:
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "keep-alive")
+        self.send_header("X-Accel-Buffering", "no")
+        self.end_headers()
+
+        async def write_stream() -> None:
+            async for chunk in generator:
+                self.wfile.write(chunk)
+                self.wfile.flush()
+
+        loop = asyncio.new_event_loop()
+        try:
+            loop.run_until_complete(write_stream())
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            print("[dashboard] SSE client disconnected")
+        finally:
+            with contextlib.suppress(Exception):
+                loop.run_until_complete(generator.aclose())
+            loop.close()
+
     def _send_file(self, output_root: Path, job_id: str, media_path: str) -> None:
         target = resolve_job_path(output_root, job_id, media_path)
         if not target or not target.exists() or not target.is_file():
@@ -153,6 +185,178 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
 def render_index(output_root: Path, selected_job_id: str | None) -> str:
     return render_job_control_dashboard(output_root, selected_job_id)
+
+
+async def stream_pipeline_events(output_root: Path, job_id: str = ""):
+    active_job = job_id or latest_job_id(output_root) or "sse_demo"
+    yield sse_payload(
+        {
+            "type": "log",
+            "job_id": active_job,
+            "message": f"\u001b[36m[sse]\u001b[0m Connected to Dump2Done stream for {active_job}",
+            "created_at": now_utc(),
+        },
+        event="log",
+    )
+    async for event in simulate_pipeline_stream(active_job):
+        yield sse_payload(event, event=event.get("type", "message"))
+
+    while True:
+        queued = drain_pipeline_event_queue()
+        if queued:
+            for event in queued:
+                yield sse_payload(event, event=event.get("type", "message"))
+        else:
+            yield sse_payload(
+                {
+                    "type": "heartbeat",
+                    "job_id": active_job,
+                    "message": "[sse] waiting for runner.py stdout/log queue events",
+                    "created_at": now_utc(),
+                },
+                event="heartbeat",
+            )
+        await asyncio.sleep(10)
+
+
+async def simulate_pipeline_stream(job_id: str):
+    phases = [
+        (
+            "asr",
+            "ASR - Faster-Whisper",
+            [
+                "extracting 16kHz mono WAV from source video",
+                "loading faster-whisper small int8 on Qualcomm CPU profile",
+                "building word-level timestamps and transcript segments",
+            ],
+        ),
+        (
+            "llm",
+            "LLM - Ollama",
+            [
+                "packing semantic chunks for highlight selection",
+                "requesting structured JSON candidates from local Ollama",
+                "validating duration windows and clip boundaries",
+            ],
+        ),
+        (
+            "vision",
+            "Vision",
+            [
+                "sampling low-fps frames for subject-aware crop planning",
+                "smoothing center track for vertical 9:16 output",
+                "writing crop track artifact for FFmpeg render stage",
+            ],
+        ),
+        (
+            "render",
+            "FFmpeg",
+            [
+                "building libx264 render graph for Qualcomm local profile",
+                "burning subtitles and audio normalization filters",
+                "writing final MP4 render artifact",
+            ],
+        ),
+    ]
+    for step, label, messages in phases:
+        yield status_event(job_id, step, "running", 5)
+        await asyncio.sleep(0.25)
+        for index, message in enumerate(messages, start=1):
+            progress = min(95, round((index / len(messages)) * 86) + 5)
+            yield log_event(job_id, f"\u001b[32m[{step}]\u001b[0m {message}")
+            yield status_event(job_id, step, "running", progress)
+            await asyncio.sleep(0.42)
+            yield log_event(job_id, f"[{label}] progress={progress}% queue=local-sse-demo")
+            await asyncio.sleep(0.18)
+        yield status_event(job_id, step, "completed", 100)
+        yield log_event(job_id, f"\u001b[32m[{step}]\u001b[0m completed")
+        await asyncio.sleep(0.45)
+    yield log_event(job_id, "\u001b[33m[demo]\u001b[0m simulated stream finished; keeping SSE connection alive")
+
+
+async def stream_subprocess_stdout(command: list[str], job_id: str):
+    """Bridge a real runner subprocess stdout into SSE-compatible events."""
+    process = await asyncio.create_subprocess_exec(
+        *command,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+    )
+    assert process.stdout is not None
+    async for raw_line in process.stdout:
+        yield log_event(job_id, raw_line.decode("utf-8", errors="replace").rstrip())
+    return_code = await process.wait()
+    yield log_event(job_id, f"[runner] process exited with code {return_code}")
+
+
+class QueueStdoutBridge:
+    """File-like bridge for redirect_stdout around PipelineRunner calls."""
+
+    def __init__(self, job_id: str) -> None:
+        self.job_id = job_id
+        self._buffer = ""
+
+    def write(self, text: str) -> int:
+        self._buffer += text
+        while "\n" in self._buffer:
+            line, self._buffer = self._buffer.split("\n", 1)
+            if line.strip():
+                publish_pipeline_log(self.job_id, line.rstrip())
+        return len(text)
+
+    def flush(self) -> None:
+        if self._buffer.strip():
+            publish_pipeline_log(self.job_id, self._buffer.rstrip())
+        self._buffer = ""
+
+
+def publish_pipeline_log(job_id: str, message: str) -> None:
+    PIPELINE_EVENT_QUEUE.put(log_event(job_id, message))
+
+
+def publish_pipeline_status(job_id: str, step: str, status: str, progress: int) -> None:
+    PIPELINE_EVENT_QUEUE.put(status_event(job_id, step, status, progress))
+
+
+def drain_pipeline_event_queue(limit: int = 100) -> list[dict]:
+    events = []
+    for _ in range(limit):
+        try:
+            events.append(PIPELINE_EVENT_QUEUE.get_nowait())
+        except queue.Empty:
+            break
+    return events
+
+
+def log_event(job_id: str, message: str) -> dict:
+    return {
+        "type": "log",
+        "job_id": job_id,
+        "message": message,
+        "created_at": now_utc(),
+    }
+
+
+def status_event(job_id: str, step: str, status: str, progress: int) -> dict:
+    return {
+        "type": "status",
+        "job_id": job_id,
+        "step": step,
+        "status": status,
+        "progress": max(0, min(100, int(progress))),
+        "created_at": now_utc(),
+    }
+
+
+def sse_payload(payload: dict, event: str = "message") -> bytes:
+    data = json.dumps(payload, ensure_ascii=False)
+    return f"event: {event}\ndata: {data}\n\n".encode("utf-8")
+
+
+def latest_job_id(output_root: Path) -> str:
+    jobs = list_jobs(output_root)
+    if not jobs:
+        return ""
+    return str(jobs[0]["manifest"].get("job_id", jobs[0]["dir"].name))
 
 
 def render_job_control_dashboard(output_root: Path, selected_job_id: str | None) -> str:
@@ -286,7 +490,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
           </div>
           <button id="clearLog" class="rounded-md border border-white/10 px-2 py-1 text-xs font-bold text-slate-400 hover:text-slate-100">Clear</button>
         </div>
-        <pre id="consoleLog" class="h-64 overflow-auto p-4 font-mono text-[12px] leading-6 text-lime-100"></pre>
+        <div id="consoleLog" class="h-64 overflow-auto p-4 font-mono text-[12px] leading-6 text-lime-100" role="log" aria-live="polite"></div>
       </article>
     </section>
   </main>
@@ -348,11 +552,13 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
     let jobs = [...INITIAL_JOBS, ...MOCK_JOBS];
     let gallery = [...INITIAL_GALLERY, ...MOCK_GALLERY];
     let activeJobId = SELECTED_JOB_ID || (jobs[0] && jobs[0].id);
+    let eventSource = null;
     const logLines = [
       "[dashboard] Booted Dump2Done local control plane on http://127.0.0.1:8765/",
       "[runner] Qualcomm profile loaded: CPU int8, single worker, ffmpeg libx264",
       "[asr] faster-whisper model=small device=cpu compute_type=int8",
-      "[llm] Ollama structured output pending for semantic clip selection"
+      "[llm] Ollama structured output pending for semantic clip selection",
+      "[sse] EventSource will attach to /api/stream-logs after first render"
     ];
 
     const phaseIcon = { completed: "check", running: "loader-circle", waiting: "circle" };
@@ -393,6 +599,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         button.addEventListener("click", () => {
           activeJobId = button.dataset.jobId;
           render();
+          connectSseStream();
         });
       });
     }
@@ -448,8 +655,32 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
 
     function renderLog() {
       const terminal = document.getElementById("consoleLog");
-      terminal.textContent = logLines.join("\n");
-      terminal.scrollTop = terminal.scrollHeight;
+      terminal.innerHTML = "";
+      for (const line of logLines.slice(-180)) {
+        terminal.appendChild(logLineElement(line));
+      }
+      scrollTerminal();
+    }
+
+    function appendLogLine(line) {
+      const terminal = document.getElementById("consoleLog");
+      logLines.push(stripAnsi(String(line)));
+      if (logLines.length > 240) logLines.splice(0, logLines.length - 240);
+      terminal.appendChild(logLineElement(line));
+      while (terminal.children.length > 180) terminal.removeChild(terminal.firstChild);
+      scrollTerminal();
+    }
+
+    function logLineElement(line) {
+      const row = document.createElement("div");
+      row.className = "min-h-5 whitespace-pre-wrap break-words";
+      row.innerHTML = ansiToHtml(String(line));
+      return row;
+    }
+
+    function scrollTerminal() {
+      const terminal = document.getElementById("consoleLog");
+      terminal.scrollTo({ top: terminal.scrollHeight, behavior: "smooth" });
     }
 
     async function refreshJobs() {
@@ -482,19 +713,19 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         if (!response.ok) throw new Error(payload.message || "Job creation failed");
         jobs = [payload.job, ...jobs];
         activeJobId = payload.job.id;
-        logLines.push(`[api] Created queued job ${payload.job.id}`);
-        logLines.push(`[next] ${payload.command}`);
+        appendLogLine(`[api] Created queued job ${payload.job.id}`);
+        appendLogLine(`[next] ${payload.command}`);
         hint.textContent = "已建立預覽任務，命令已寫入 Console。";
         render();
+        connectSseStream();
       } catch (error) {
         hint.textContent = error.message;
-        logLines.push(`[error] ${error.message}`);
-        renderLog();
+        appendLogLine(`[error] ${error.message}`);
       }
     });
 
     async function openFolder(folderPath) {
-      logLines.push(`[folder] ${folderPath || "No folder path supplied"}`);
+      appendLogLine(`[folder] ${folderPath || "No folder path supplied"}`);
       try {
         const response = await fetch("/api/open-folder", {
           method: "POST",
@@ -502,16 +733,105 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
           body: JSON.stringify({ path: folderPath })
         });
         const payload = await response.json();
-        logLines.push(`[folder] ${payload.message || payload.status}`);
+        appendLogLine(`[folder] ${payload.message || payload.status}`);
       } catch (error) {
-        logLines.push(`[folder] ${error.message}`);
+        appendLogLine(`[folder] ${error.message}`);
       }
-      renderLog();
     }
 
     function playLocal(fileName) {
-      logLines.push(`[player] Local playback placeholder for ${fileName}. Render media route will be wired after crop/render artifacts exist.`);
-      renderLog();
+      appendLogLine(`[player] Local playback placeholder for ${fileName}. Render media route will be wired after crop/render artifacts exist.`);
+    }
+
+    function connectSseStream() {
+      if (!window.EventSource) {
+        appendLogLine("[sse] Browser does not support EventSource.");
+        return;
+      }
+      if (eventSource) eventSource.close();
+      const url = `/api/stream-logs?job=${encodeURIComponent(activeJobId || "")}`;
+      eventSource = new EventSource(url);
+      appendLogLine(`[sse] connecting ${url}`);
+      eventSource.addEventListener("open", () => appendLogLine("[sse] connected"));
+      eventSource.addEventListener("log", event => handleStreamEvent(event));
+      eventSource.addEventListener("status", event => handleStreamEvent(event));
+      eventSource.addEventListener("heartbeat", event => handleStreamEvent(event));
+      eventSource.onmessage = event => handleStreamEvent(event);
+      eventSource.onerror = () => {
+        appendLogLine("[sse] connection interrupted; browser will retry automatically");
+      };
+    }
+
+    function handleStreamEvent(event) {
+      let payload;
+      try {
+        payload = JSON.parse(event.data);
+      } catch {
+        appendLogLine(event.data);
+        return;
+      }
+      if (payload.type === "status") {
+        updateJobPhase(payload);
+        renderStats();
+        renderPipeline();
+        lucide.createIcons();
+        return;
+      }
+      if (payload.type === "heartbeat") {
+        appendLogLine(`${payload.message} · ${payload.created_at}`);
+        return;
+      }
+      appendLogLine(payload.message || JSON.stringify(payload));
+    }
+
+    function updateJobPhase(payload) {
+      const jobId = payload.job_id || activeJobId || "sse_demo";
+      let job = jobs.find(item => item.id === jobId);
+      if (!job) {
+        job = {
+          id: jobId,
+          status: "running",
+          profile: "sse-stream",
+          videoPath: "live pipeline stream",
+          outputDirectory: "output\\jobs",
+          updatedAt: payload.created_at,
+          phases: defaultPhases()
+        };
+        jobs = [job, ...jobs];
+        activeJobId = jobId;
+        renderJobs();
+      }
+      const phase = job.phases.find(item => item.key === payload.step);
+      if (phase) {
+        phase.status = payload.status || phase.status;
+        phase.progress = Number(payload.progress || 0);
+      }
+      job.status = job.phases.every(item => item.status === "completed") ? "completed" : "running";
+      job.updatedAt = payload.created_at || new Date().toISOString();
+    }
+
+    function defaultPhases() {
+      return [
+        { key: "asr", label: "語音識別", detail: "ASR - Faster-Whisper", status: "waiting", progress: 0 },
+        { key: "llm", label: "語意理解", detail: "LLM - Ollama", status: "waiting", progress: 0 },
+        { key: "vision", label: "智慧裁剪", detail: "Vision", status: "waiting", progress: 0 },
+        { key: "render", label: "影音渲染", detail: "FFmpeg", status: "waiting", progress: 0 }
+      ];
+    }
+
+    function ansiToHtml(value) {
+      const escaped = escapeHtml(value);
+      return escaped
+        .replace(/\u001b\[32m/g, '<span class="text-lime-300">')
+        .replace(/\u001b\[36m/g, '<span class="text-sky-300">')
+        .replace(/\u001b\[33m/g, '<span class="text-orange-300">')
+        .replace(/\u001b\[31m/g, '<span class="text-red-300">')
+        .replace(/\u001b\[0m/g, "</span>")
+        .replace(/\u001b\[[0-9;]*m/g, "");
+    }
+
+    function stripAnsi(value) {
+      return value.replace(/\u001b\[[0-9;]*m/g, "");
     }
 
     function statusBadge(status) {
@@ -534,6 +854,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
     }
 
     render();
+    connectSseStream();
   </script>
 </body>
 </html>"""
