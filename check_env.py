@@ -1,0 +1,661 @@
+"""Dump2Done local environment probe.
+
+This script checks whether the current machine is suitable for the first
+Dump2Done development pipeline and prints a JSON report. It intentionally uses
+the Python standard library first, then detects optional packages if installed.
+"""
+
+from __future__ import annotations
+
+import argparse
+import ctypes
+import importlib.util
+import json
+import os
+import platform
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.error
+import urllib.request
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+
+def run_command(command: list[str], timeout: int = 10) -> dict[str, Any]:
+    executable = shutil.which(command[0])
+    if not executable:
+        return {
+            "available": False,
+            "command": command,
+            "error": f"{command[0]} not found in PATH",
+        }
+
+    try:
+        completed = subprocess.run(
+            [executable, *command[1:]],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+        return {
+            "available": completed.returncode == 0,
+            "command": command,
+            "returncode": completed.returncode,
+            "stdout": completed.stdout.strip(),
+            "stderr": completed.stderr.strip(),
+        }
+    except subprocess.TimeoutExpired:
+        return {
+            "available": False,
+            "command": command,
+            "error": f"Command timed out after {timeout}s",
+        }
+    except Exception as exc:  # pragma: no cover - defensive OS boundary
+        return {"available": False, "command": command, "error": str(exc)}
+
+
+def module_available(name: str) -> bool:
+    return importlib.util.find_spec(name) is not None
+
+
+def import_version(name: str) -> str | None:
+    if not module_available(name):
+        return None
+    try:
+        module = __import__(name)
+        return getattr(module, "__version__", None)
+    except Exception:
+        return None
+
+
+def bytes_to_gb(value: int | float | None) -> float | None:
+    if value is None:
+        return None
+    return round(float(value) / (1024**3), 2)
+
+
+def get_memory_info() -> dict[str, Any]:
+    if module_available("psutil"):
+        import psutil  # type: ignore
+
+        memory = psutil.virtual_memory()
+        return {
+            "source": "psutil",
+            "total_gb": bytes_to_gb(memory.total),
+            "available_gb": bytes_to_gb(memory.available),
+            "percent_used": memory.percent,
+        }
+
+    if platform.system().lower() == "windows":
+        class MEMORYSTATUSEX(ctypes.Structure):
+            _fields_ = [
+                ("dwLength", ctypes.c_ulong),
+                ("dwMemoryLoad", ctypes.c_ulong),
+                ("ullTotalPhys", ctypes.c_ulonglong),
+                ("ullAvailPhys", ctypes.c_ulonglong),
+                ("ullTotalPageFile", ctypes.c_ulonglong),
+                ("ullAvailPageFile", ctypes.c_ulonglong),
+                ("ullTotalVirtual", ctypes.c_ulonglong),
+                ("ullAvailVirtual", ctypes.c_ulonglong),
+                ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+            ]
+
+        status = MEMORYSTATUSEX()
+        status.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
+        if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+            return {
+                "source": "ctypes",
+                "total_gb": bytes_to_gb(status.ullTotalPhys),
+                "available_gb": bytes_to_gb(status.ullAvailPhys),
+                "percent_used": status.dwMemoryLoad,
+            }
+
+    if hasattr(os, "sysconf"):
+        try:
+            pages = os.sysconf("SC_PHYS_PAGES")
+            page_size = os.sysconf("SC_PAGE_SIZE")
+            available_pages = os.sysconf("SC_AVPHYS_PAGES")
+            return {
+                "source": "sysconf",
+                "total_gb": bytes_to_gb(pages * page_size),
+                "available_gb": bytes_to_gb(available_pages * page_size),
+                "percent_used": None,
+            }
+        except (ValueError, OSError):
+            pass
+
+    return {
+        "source": "unknown",
+        "total_gb": None,
+        "available_gb": None,
+        "percent_used": None,
+    }
+
+
+def get_cpu_model() -> str:
+    processor = platform.processor()
+    if processor:
+        return processor
+
+    system = platform.system().lower()
+    if system == "windows":
+        result = run_command(["wmic", "cpu", "get", "name"], timeout=5)
+        if result.get("available") and result.get("stdout"):
+            lines = [line.strip() for line in result["stdout"].splitlines() if line.strip()]
+            if len(lines) > 1:
+                return lines[1]
+    elif system == "linux":
+        try:
+            with open("/proc/cpuinfo", "r", encoding="utf-8", errors="ignore") as handle:
+                for line in handle:
+                    if line.lower().startswith("model name"):
+                        return line.split(":", 1)[1].strip()
+        except OSError:
+            pass
+
+    return "unknown"
+
+
+def parse_first_line(text: str | None) -> str | None:
+    if not text:
+        return None
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped:
+            return stripped
+    return None
+
+
+def check_basic_tools() -> dict[str, Any]:
+    pip_result = run_command([sys.executable, "-m", "pip", "--version"], timeout=10)
+    ffmpeg_result = run_command(["ffmpeg", "-version"], timeout=10)
+    ffprobe_result = run_command(["ffprobe", "-version"], timeout=10)
+    git_result = run_command(["git", "--version"], timeout=10)
+
+    return {
+        "os": {
+            "system": platform.system(),
+            "release": platform.release(),
+            "version": platform.version(),
+            "machine": platform.machine(),
+        },
+        "python": {
+            "version": platform.python_version(),
+            "executable": sys.executable,
+            "is_venv": sys.prefix != sys.base_prefix,
+            "prefix": sys.prefix,
+            "base_prefix": sys.base_prefix,
+        },
+        "pip": {
+            "available": pip_result.get("available", False),
+            "version": parse_first_line(pip_result.get("stdout") or pip_result.get("stderr")),
+        },
+        "ffmpeg": {
+            "available": ffmpeg_result.get("available", False),
+            "version": parse_first_line(ffmpeg_result.get("stdout")),
+        },
+        "ffprobe": {
+            "available": ffprobe_result.get("available", False),
+            "version": parse_first_line(ffprobe_result.get("stdout")),
+        },
+        "git": {
+            "available": git_result.get("available", False),
+            "version": parse_first_line(git_result.get("stdout") or git_result.get("stderr")),
+        },
+    }
+
+
+def check_compute() -> dict[str, Any]:
+    cwd_disk = shutil.disk_usage(Path.cwd())
+    temp_disk = shutil.disk_usage(tempfile.gettempdir())
+    memory = get_memory_info()
+    cpu_count = os.cpu_count()
+
+    total_ram = memory.get("total_gb") or 0
+    can_handle_long_video = bool(
+        total_ram >= 16
+        and bytes_to_gb(cwd_disk.free) is not None
+        and (bytes_to_gb(cwd_disk.free) or 0) >= 50
+    )
+
+    return {
+        "cpu": {
+            "model": get_cpu_model(),
+            "logical_threads": cpu_count,
+            "physical_cores": None,
+            "note": "Install psutil to report physical core count accurately."
+            if not module_available("psutil")
+            else None,
+        },
+        "memory": memory,
+        "disk": {
+            "cwd": str(Path.cwd()),
+            "cwd_free_gb": bytes_to_gb(cwd_disk.free),
+            "cwd_total_gb": bytes_to_gb(cwd_disk.total),
+            "temp_dir": tempfile.gettempdir(),
+            "temp_free_gb": bytes_to_gb(temp_disk.free),
+            "recommended_temp_dir": "Use a fast SSD/NVMe path with at least 100GB free for long videos.",
+        },
+        "long_video_suitability": {
+            "suitable_for_30_min_plus": can_handle_long_video,
+            "reason": "RAM >= 16GB and workspace disk free >= 50GB"
+            if can_handle_long_video
+            else "Use chunk-based processing; upgrade RAM/disk for reliable 30min+ jobs.",
+        },
+    }
+
+
+def parse_nvidia_smi_csv(stdout: str) -> list[dict[str, Any]]:
+    gpus: list[dict[str, Any]] = []
+    for line in stdout.splitlines():
+        if not line.strip():
+            continue
+        parts = [part.strip() for part in line.split(",")]
+        if len(parts) < 4:
+            continue
+        name, memory_total, driver_version, cuda_version = parts[:4]
+        try:
+            memory_gb = round(float(memory_total.split()[0]) / 1024, 2)
+        except (ValueError, IndexError):
+            memory_gb = None
+        gpus.append(
+            {
+                "name": name,
+                "vram_gb": memory_gb,
+                "driver_version": driver_version,
+                "cuda_version_from_driver": cuda_version,
+            }
+        )
+    return gpus
+
+
+def check_torch_cuda() -> dict[str, Any]:
+    if not module_available("torch"):
+        return {
+            "installed": False,
+            "cuda_available": False,
+            "version": None,
+            "cuda_runtime_version": None,
+        }
+
+    try:
+        import torch  # type: ignore
+
+        device_count = torch.cuda.device_count() if torch.cuda.is_available() else 0
+        devices = []
+        for index in range(device_count):
+            capability = torch.cuda.get_device_capability(index)
+            props = torch.cuda.get_device_properties(index)
+            devices.append(
+                {
+                    "index": index,
+                    "name": props.name,
+                    "total_memory_gb": bytes_to_gb(props.total_memory),
+                    "compute_capability": f"{capability[0]}.{capability[1]}",
+                    "fp16_likely_supported": capability[0] >= 5,
+                }
+            )
+
+        return {
+            "installed": True,
+            "version": getattr(torch, "__version__", None),
+            "cuda_available": torch.cuda.is_available(),
+            "cuda_runtime_version": getattr(torch.version, "cuda", None),
+            "device_count": device_count,
+            "devices": devices,
+        }
+    except Exception as exc:
+        return {
+            "installed": True,
+            "cuda_available": False,
+            "error": str(exc),
+        }
+
+
+def check_gpu_cuda() -> dict[str, Any]:
+    smi = run_command(
+        [
+            "nvidia-smi",
+            "--query-gpu=name,memory.total,driver_version,cuda_version",
+            "--format=csv,noheader",
+        ],
+        timeout=10,
+    )
+    nvcc = run_command(["nvcc", "--version"], timeout=10)
+    torch_cuda = check_torch_cuda()
+    gpus = parse_nvidia_smi_csv(smi.get("stdout", "")) if smi.get("available") else []
+    max_vram = max([gpu.get("vram_gb") or 0 for gpu in gpus], default=0)
+
+    cuda_usable = bool(smi.get("available") and (torch_cuda.get("cuda_available") or nvcc.get("available")))
+    fp16_supported = bool(
+        any(device.get("fp16_likely_supported") for device in torch_cuda.get("devices", []))
+        or max_vram >= 6
+    )
+
+    return {
+        "nvidia_smi_available": smi.get("available", False),
+        "gpus": gpus,
+        "gpu_count": len(gpus),
+        "max_vram_gb": max_vram,
+        "nvcc_available": nvcc.get("available", False),
+        "nvcc_version": parse_first_line(nvcc.get("stdout") or nvcc.get("stderr")),
+        "torch": torch_cuda,
+        "cuda_usable": cuda_usable,
+        "fp16_likely_supported": fp16_supported,
+        "faster_whisper_cuda_recommendation": (
+            'Use device="cuda", compute_type="float16" or "int8_float16".'
+            if cuda_usable and fp16_supported
+            else 'Use device="cpu", compute_type="int8", or install CUDA-enabled PyTorch/CTranslate2.'
+        ),
+        "fallback": (
+            "CPU int8 ASR, CPU/libx264 rendering, lower detection FPS, or external/API LLM."
+            if not cuda_usable
+            else None
+        ),
+    }
+
+
+def check_ffmpeg_codecs() -> dict[str, Any]:
+    encoders = run_command(["ffmpeg", "-hide_banner", "-encoders"], timeout=20)
+    decoders = run_command(["ffmpeg", "-hide_banner", "-decoders"], timeout=20)
+    encoder_text = (encoders.get("stdout") or "") + "\n" + (encoders.get("stderr") or "")
+    decoder_text = (decoders.get("stdout") or "") + "\n" + (decoders.get("stderr") or "")
+
+    encoder_names = ["h264_nvenc", "hevc_nvenc", "av1_nvenc", "libx264", "libx265"]
+    decoder_names = ["h264_cuvid", "hevc_cuvid"]
+    supported_encoders = {name: name in encoder_text for name in encoder_names}
+    supported_decoders = {name: name in decoder_text for name in decoder_names}
+    gpu_encode = any(supported_encoders.get(name) for name in ["h264_nvenc", "hevc_nvenc", "av1_nvenc"])
+
+    return {
+        "encoders_query_available": encoders.get("available", False),
+        "decoders_query_available": decoders.get("available", False),
+        "encoders": supported_encoders,
+        "decoders": supported_decoders,
+        "gpu_encoding_available": gpu_encode,
+        "cpu_encoding_available": supported_encoders.get("libx264") or supported_encoders.get("libx265"),
+        "recommendation": (
+            "Prefer h264_nvenc for MVP exports; try hevc_nvenc for smaller files."
+            if gpu_encode
+            else "Use libx264/libx265 and expect render time to be a major bottleneck."
+        ),
+        "long_video_bottleneck": (
+            "ASR, smart crop detection, and final render I/O will dominate; process clips/chunks."
+            if gpu_encode
+            else "CPU encoding plus ASR/CV will dominate; keep MVP clips short and cache artifacts."
+        ),
+    }
+
+
+def check_asr() -> dict[str, Any]:
+    fw_installed = module_available("faster_whisper")
+    ct2_installed = module_available("ctranslate2")
+    ct2_version = import_version("ctranslate2")
+
+    return {
+        "faster_whisper_installed": fw_installed,
+        "ctranslate2_installed": ct2_installed,
+        "ctranslate2_version": ct2_version,
+        "planned_backends": ["faster-whisper", "WhisperX"],
+        "model_recommendations": {
+            "high_vram": {"model": "large-v3 or distil-large-v3", "compute_type": "float16"},
+            "mid_vram": {"model": "distil-large-v3 or medium", "compute_type": "int8_float16"},
+            "low_vram_or_cpu": {"model": "small or medium", "compute_type": "int8"},
+        },
+    }
+
+
+def check_ollama(base_url: str, timeout: int = 3) -> dict[str, Any]:
+    ollama_binary = run_command(["ollama", "--version"], timeout=5)
+    url = base_url.rstrip("/") + "/api/tags"
+    api: dict[str, Any] = {"available": False, "url": url, "models": []}
+    try:
+        request = urllib.request.Request(url, headers={"Accept": "application/json"})
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+            api = {
+                "available": True,
+                "url": url,
+                "models": [model.get("name") for model in payload.get("models", [])],
+            }
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError) as exc:
+        api["error"] = str(exc)
+
+    return {
+        "ollama_binary_available": ollama_binary.get("available", False),
+        "ollama_version": parse_first_line(ollama_binary.get("stdout") or ollama_binary.get("stderr")),
+        "ollama_api": api,
+        "backend_abstraction_needed": True,
+        "supported_future_backends": ["ollama", "vllm", "llama.cpp", "openai-compatible", "triton"],
+        "structured_output_note": "Prefer instruct models that reliably emit strict JSON.",
+    }
+
+
+def check_vision() -> dict[str, Any]:
+    cv2_installed = module_available("cv2")
+    mediapipe_installed = module_available("mediapipe")
+    cv2_cuda = None
+
+    if cv2_installed:
+        try:
+            import cv2  # type: ignore
+
+            cv2_cuda = {
+                "opencv_version": cv2.__version__,
+                "cuda_device_count": cv2.cuda.getCudaEnabledDeviceCount()
+                if hasattr(cv2, "cuda")
+                else 0,
+            }
+        except Exception as exc:
+            cv2_cuda = {"error": str(exc)}
+
+    return {
+        "opencv_installed": cv2_installed,
+        "mediapipe_installed": mediapipe_installed,
+        "opencv_cuda": cv2_cuda,
+        "strategy": {
+            "long_video_face_detection": "Sample at 1-10 fps by hardware level, interpolate crop track, smooth with EMA.",
+            "avoid": "Do not run full face/object detection on every frame for 30min+ videos.",
+            "fallback": "Center crop when no confident subject is detected.",
+        },
+    }
+
+
+@dataclass
+class LevelDecision:
+    level: str
+    reason: str
+    recommendations: dict[str, Any]
+
+
+def classify_hardware(report: dict[str, Any]) -> LevelDecision:
+    memory_gb = report["compute"]["memory"].get("total_gb") or 0
+    gpu = report["gpu_cuda"]
+    max_vram = gpu.get("max_vram_gb") or 0
+    cuda = bool(gpu.get("cuda_usable"))
+    nvenc = bool(report["ffmpeg_codecs"].get("gpu_encoding_available"))
+
+    if cuda and nvenc and max_vram >= 16 and memory_gb >= 32:
+        return LevelDecision(
+            "A",
+            "High-end local workstation: CUDA, NVENC, >=16GB VRAM, >=32GB RAM.",
+            {
+                "whisper_model": "large-v3 or distil-large-v3",
+                "compute_type": "float16",
+                "llm": "7B/8B instruct local model",
+                "smart_crop_detection_fps": "5-10",
+                "output": "1080x1920 30fps",
+                "encoder": "h264_nvenc or hevc_nvenc",
+                "long_video": "Chunk processing still recommended.",
+            },
+        )
+
+    if cuda and max_vram >= 8 and memory_gb >= 16:
+        return LevelDecision(
+            "B",
+            "Mid-range local workstation: CUDA with 8-12GB+ VRAM and 16GB+ RAM.",
+            {
+                "whisper_model": "distil-large-v3 or medium",
+                "compute_type": "float16 or int8_float16",
+                "llm": "quantized 7B instruct model",
+                "smart_crop_detection_fps": "3-5",
+                "output": "720x1280 or 1080x1920",
+                "encoder": "Prefer NVENC; fallback to libx264.",
+                "long_video": "Segment pipeline; never load all frames/transcript at once.",
+            },
+        )
+
+    if cuda and max_vram > 0:
+        return LevelDecision(
+            "C",
+            "Entry GPU platform: CUDA exists but VRAM/RAM is limited.",
+            {
+                "whisper_model": "small, medium, or distil-large-v3 int8",
+                "compute_type": "int8 or int8_float16",
+                "llm": "small quantized local model or external fallback",
+                "smart_crop_detection_fps": "1-3",
+                "output": "720x1280",
+                "encoder": "NVENC if available; otherwise libx264.",
+                "long_video": "Validate with 1-3 minute clips before full videos.",
+            },
+        )
+
+    return LevelDecision(
+        "D",
+        "CPU-only or unstable CUDA platform.",
+        {
+            "whisper_model": "small or medium CPU",
+            "compute_type": "int8",
+            "llm": "small CPU quantized model or external API",
+            "smart_crop_detection_fps": "0.5-1 with interpolation",
+            "output": "720x1280 for tests",
+            "encoder": "libx264",
+            "long_video": "Suitable for feature validation, not production throughput.",
+        },
+    )
+
+
+def classify_nvidia_readiness(report: dict[str, Any]) -> dict[str, Any]:
+    docker = run_command(["docker", "--version"], timeout=5)
+    compose = run_command(["docker", "compose", "version"], timeout=5)
+    gpu = report["gpu_cuda"]
+    nvenc = report["ffmpeg_codecs"].get("gpu_encoding_available")
+    gpu_count = gpu.get("gpu_count") or 0
+    max_vram = gpu.get("max_vram_gb") or 0
+
+    ready_score = 0
+    ready_score += 2 if gpu.get("cuda_usable") else 0
+    ready_score += 2 if nvenc else 0
+    ready_score += 1 if docker.get("available") else 0
+    ready_score += 1 if compose.get("available") else 0
+    ready_score += 2 if gpu_count >= 2 else 0
+    ready_score += 1 if max_vram >= 16 else 0
+
+    if ready_score >= 7:
+        tier = "N2"
+        meaning = "Strong NVIDIA workstation/server candidate."
+    elif ready_score >= 4:
+        tier = "N1"
+        meaning = "NVIDIA-ready single-node candidate; container/runtime work remains."
+    else:
+        tier = "N0"
+        meaning = "Not NVIDIA-platform-ready yet; keep local MVP backend-agnostic."
+
+    return {
+        "tier": tier,
+        "meaning": meaning,
+        "score": ready_score,
+        "docker_available": docker.get("available", False),
+        "docker_version": parse_first_line(docker.get("stdout") or docker.get("stderr")),
+        "docker_compose_available": compose.get("available", False),
+        "docker_compose_version": parse_first_line(compose.get("stdout") or compose.get("stderr")),
+        "supports_worker_split": gpu_count >= 1,
+        "multi_gpu_candidate": gpu_count >= 2,
+        "triton_candidate": bool(max_vram >= 16 and gpu.get("cuda_usable")),
+        "tensorrt_candidate": bool(max_vram >= 8 and gpu.get("cuda_usable")),
+        "batch_processing_candidate": bool(gpu.get("cuda_usable") and report["compute"]["memory"].get("total_gb", 0) >= 32),
+    }
+
+
+def build_report(args: argparse.Namespace) -> dict[str, Any]:
+    started = time.time()
+    report: dict[str, Any] = {
+        "schema_version": "1.0",
+        "tool": "dump2done.check_env",
+        "generated_at_unix": started,
+        "basic": check_basic_tools(),
+        "compute": check_compute(),
+    }
+    report["gpu_cuda"] = check_gpu_cuda()
+    report["ffmpeg_codecs"] = check_ffmpeg_codecs()
+    report["asr"] = check_asr()
+    report["llm"] = check_ollama(args.ollama_url)
+    report["vision"] = check_vision()
+
+    decision = classify_hardware(report)
+    report["hardware_level"] = {
+        "level": decision.level,
+        "reason": decision.reason,
+        "recommendations": decision.recommendations,
+    }
+    report["nvidia_readiness"] = classify_nvidia_readiness(report)
+    report["elapsed_seconds"] = round(time.time() - started, 2)
+    return report
+
+
+def print_human_summary(report: dict[str, Any]) -> None:
+    level = report["hardware_level"]
+    nvidia = report["nvidia_readiness"]
+    basic = report["basic"]
+    gpu = report["gpu_cuda"]
+    ffmpeg = report["ffmpeg_codecs"]
+
+    print("Dump2Done Environment Probe")
+    print("===========================")
+    print(f"OS: {basic['os']['system']} {basic['os']['release']} ({basic['os']['machine']})")
+    print(f"Python: {basic['python']['version']} | venv: {basic['python']['is_venv']}")
+    print(f"FFmpeg: {basic['ffmpeg']['available']} | FFprobe: {basic['ffprobe']['available']}")
+    print(f"Git: {basic['git']['available']}")
+    print(f"NVIDIA GPUs: {gpu['gpu_count']} | CUDA usable: {gpu['cuda_usable']} | max VRAM GB: {gpu['max_vram_gb']}")
+    print(f"NVENC available: {ffmpeg['gpu_encoding_available']}")
+    print(f"Hardware Level: {level['level']} - {level['reason']}")
+    print(f"NVIDIA Readiness: {nvidia['tier']} - {nvidia['meaning']}")
+    print("")
+    print("Recommendations:")
+    for key, value in level["recommendations"].items():
+        print(f"- {key}: {value}")
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Check local Dump2Done development environment.")
+    parser.add_argument("--json", action="store_true", help="Print full JSON report to stdout.")
+    parser.add_argument("--output", type=Path, help="Write full JSON report to a file.")
+    parser.add_argument("--ollama-url", default="http://127.0.0.1:11434", help="Ollama base URL.")
+    return parser.parse_args()
+
+
+def main() -> int:
+    args = parse_args()
+    report = build_report(args)
+
+    if args.output:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    if args.json:
+        print(json.dumps(report, indent=2, ensure_ascii=False))
+    else:
+        print_human_summary(report)
+        if args.output:
+            print(f"\nFull report written to: {args.output}")
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

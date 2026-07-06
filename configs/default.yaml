@@ -1,0 +1,87 @@
+project:
+  name: Dump2Done
+  output_root: output/jobs
+  cache_mode: reuse
+  debug: true
+
+pipeline:
+  chunk_duration_sec: 300
+  max_parallel_workers: 1
+  resume: true
+
+media:
+  temp_dir: null
+  extract_audio_sample_rate: 16000
+  extract_audio_channels: 1
+
+asr:
+  backend: faster_whisper
+  model_size: distil-large-v3
+  device: auto
+  compute_type: auto
+  word_timestamps: true
+
+llm:
+  backend: ollama
+  base_url: http://127.0.0.1:11434
+  model: llama3.1:8b-instruct-q4_K_M
+  structured_output: true
+  chunk_duration_sec: 300
+  top_n_candidates_per_chunk: 5
+  global_top_n: 5
+
+vision:
+  backend: mediapipe
+  fallback_backend: opencv
+  detection_fps: auto
+  confidence_threshold: 0.5
+  smoothing:
+    method: ema
+    alpha: 0.25
+    dead_zone_ratio: 0.08
+    max_movement_ratio_per_sec: 0.35
+
+crop:
+  target_format: 9:16
+  strategy: speaker_center
+  fallback: center_crop
+
+subtitles:
+  format: ass
+  language: auto
+  font_family: auto
+  font_size: auto
+  outline: 3
+  shadow: 1
+  max_chars_per_line_cjk: 14
+  max_words_per_line_en: 6
+  keyword_highlight: true
+
+music:
+  enabled: false
+  library_path: assets/music
+  ducking_db: -12
+  fade_in_sec: 0.5
+  fade_out_sec: 1.0
+
+voiceover:
+  enabled: false
+  backend: none
+  voice: default
+  language: auto
+
+render:
+  backend: ffmpeg
+  target_format: 9:16
+  fps: 30
+  resolution:
+    "9:16": [1080, 1920]
+    "1:1": [1080, 1080]
+    "16:9": [1920, 1080]
+  encoder_preference:
+    - h264_nvenc
+    - hevc_nvenc
+    - libx264
+  video_bitrate: 8M
+  audio_codec: aac
+  audio_bitrate: 192k
