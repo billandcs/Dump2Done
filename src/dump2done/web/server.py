@@ -13,6 +13,7 @@ import queue
 import re
 import shutil
 import subprocess
+import sys
 import threading
 import uuid
 from datetime import datetime, timezone
@@ -20,6 +21,13 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import parse_qs, quote, urlparse
+
+
+SRC_ROOT = Path(__file__).resolve().parents[2]
+if str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
+
+from dump2done.pipeline.video_edit import run_local_video_edit
 
 
 STAGE_LABELS = [
@@ -33,6 +41,8 @@ STAGE_LABELS = [
 ]
 
 PIPELINE_EVENT_QUEUE: queue.Queue[dict] = queue.Queue()
+VIDEO_WORKERS: set[str] = set()
+VIDEO_WORKERS_LOCK = threading.Lock()
 LOG_WRITE_LOCK = threading.Lock()
 DEFAULT_OUTPUT_ROOT = Path("output/jobs")
 CONSOLE_LOG_PATH = Path("output/logs/dashboard_console.ndjson")
@@ -419,6 +429,113 @@ def publish_pipeline_log(job_id: str, message: str) -> None:
 
 def publish_pipeline_status(job_id: str, step: str, status: str, progress: int) -> None:
     PIPELINE_EVENT_QUEUE.put(status_event(job_id, step, status, progress))
+
+
+VIDEO_EDIT_STAGE_TO_FRONTEND = {
+    "analyze": "asr",
+    "edit_plan": "llm",
+    "video_edit": "vision",
+    "render": "render",
+}
+
+
+def start_video_edit_worker(output_root: Path, job_id: str) -> None:
+    safe_job_id = sanitize_job_id(job_id)
+    with VIDEO_WORKERS_LOCK:
+        if safe_job_id in VIDEO_WORKERS:
+            publish_pipeline_log(safe_job_id, "[video-edit] runner is already active for this job")
+            return
+        VIDEO_WORKERS.add(safe_job_id)
+
+    thread = threading.Thread(
+        target=run_video_edit_worker,
+        args=(output_root, safe_job_id),
+        daemon=True,
+        name=f"video-edit-{safe_job_id}",
+    )
+    thread.start()
+
+
+def run_video_edit_worker(output_root: Path, job_id: str) -> None:
+    job_dir = output_root / sanitize_job_id(job_id)
+    try:
+        manifest = read_json_or_none(job_dir / "job_manifest.json") or {}
+        input_relative = manifest.get("input", {}).get("source_path")
+        if not input_relative:
+            raise RuntimeError("Job manifest is missing input.source_path.")
+        input_path = job_dir / str(input_relative)
+        request = read_json_or_none(job_dir / "reports/edit_request.json") or {}
+        config = read_json_or_none(job_dir / "reports/effective_config.json") or {}
+        prompt = str(request.get("prompt") or "")
+        resolution = str(config.get("resolution") or request.get("resolution") or "original")
+
+        set_manifest_status(job_dir, "running")
+        publish_pipeline_log(job_id, "[video-edit] starting local runner")
+
+        def on_stage(stage_name: str, stage_status: str, progress: int) -> None:
+            mark_manifest_stage(job_dir, stage_name, stage_status)
+            frontend_step = VIDEO_EDIT_STAGE_TO_FRONTEND.get(stage_name, stage_name)
+            publish_pipeline_status(job_id, frontend_step, stage_status, progress)
+
+        result = run_local_video_edit(
+            input_path=input_path,
+            job_dir=job_dir,
+            prompt=prompt,
+            resolution=resolution,
+            log=lambda message: publish_pipeline_log(job_id, message),
+            stage=on_stage,
+        )
+        manifest = read_json_or_none(job_dir / "job_manifest.json") or {}
+        manifest["status"] = "completed"
+        manifest["updated_at"] = now_utc()
+        manifest.setdefault("outputs", {})["edited_video"] = result.get("output_path")
+        manifest.setdefault("reports", {})["video_edit"] = "reports/video_edit.json"
+        write_json_file(job_dir / "job_manifest.json", manifest)
+        publish_pipeline_log(job_id, "[video-edit] gallery refresh is ready")
+    except Exception as exc:
+        mark_video_job_failed(job_dir, job_id, exc)
+    finally:
+        with VIDEO_WORKERS_LOCK:
+            VIDEO_WORKERS.discard(job_id)
+
+
+def set_manifest_status(job_dir: Path, status: str) -> None:
+    manifest = read_json_or_none(job_dir / "job_manifest.json") or {}
+    manifest["status"] = status
+    manifest["updated_at"] = now_utc()
+    write_json_file(job_dir / "job_manifest.json", manifest)
+
+
+def mark_manifest_stage(job_dir: Path, stage: str, status: str) -> None:
+    manifest = read_json_or_none(job_dir / "job_manifest.json") or {}
+    manifest.setdefault("stages", {})[stage] = status
+    if status == "running":
+        manifest["status"] = "running"
+    elif status == "failed":
+        manifest["status"] = "failed"
+    manifest["updated_at"] = now_utc()
+    write_json_file(job_dir / "job_manifest.json", manifest)
+
+
+def mark_video_job_failed(job_dir: Path, job_id: str, exc: Exception) -> None:
+    manifest = read_json_or_none(job_dir / "job_manifest.json") or {}
+    manifest["status"] = "failed"
+    manifest.setdefault("stages", {})["video_edit"] = "failed"
+    manifest["updated_at"] = now_utc()
+    manifest.setdefault("errors", []).append({"message": str(exc), "created_at": now_utc()})
+    write_json_file(job_dir / "job_manifest.json", manifest)
+    write_json_file(
+        job_dir / "reports/video_edit_error.json",
+        {
+            "schema_version": "1.0",
+            "stage": "video_edit",
+            "status": "failed",
+            "created_at": now_utc(),
+            "errors": [{"message": str(exc)}],
+        },
+    )
+    publish_pipeline_status(job_id, "vision", "failed", 0)
+    publish_pipeline_log(job_id, f"[video-edit] failed: {exc}")
 
 
 def drain_pipeline_event_queue(limit: int = 100) -> list[dict]:
@@ -815,11 +932,12 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       "[sse] EventSource will attach to /api/stream-logs after first render"
     ];
 
-    const phaseIcon = { completed: "check", running: "loader-circle", waiting: "circle" };
+    const phaseIcon = { completed: "check", running: "loader-circle", waiting: "circle", failed: "circle-alert" };
     const phaseTone = {
       completed: "border-lime-300/35 bg-lime-300/10 text-lime-100",
       running: "border-sky-300/40 bg-sky-300/10 text-sky-100",
-      waiting: "border-white/10 bg-white/[0.03] text-slate-300"
+      waiting: "border-white/10 bg-white/[0.03] text-slate-300",
+      failed: "border-red-300/45 bg-red-300/10 text-red-100"
     };
     const I18N = {
       "zh-Hant": {
@@ -879,7 +997,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         readingFile: "讀取檔案中...",
         processing: "上傳並處理中...",
         imageReadyHint: "圖片會立即以本地 Pillow 編輯並匯出到指定資料夾。",
-        videoReadyHint: "影片會建立 pipeline job，輸出會進入工作佇列。",
+        videoReadyHint: "影片會啟動本地編輯 runner，完成後自動回到畫廊。",
         adaptiveOptionsTitle: "選檔後顯示適用設定",
         adaptiveOptionsHelp: "圖片會進入圖片編輯模式；影片才會顯示 Profile、模型與解析度設定。",
         videoProfile: "影片 Profile",
@@ -963,7 +1081,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         readingFile: "Reading file...",
         processing: "Uploading and processing...",
         imageReadyHint: "Images are edited locally with Pillow and exported to the selected folder.",
-        videoReadyHint: "Videos create a pipeline job and enter the queue.",
+        videoReadyHint: "Videos start the local edit runner and return to the gallery when finished.",
         adaptiveOptionsTitle: "Settings appear after file detection",
         adaptiveOptionsHelp: "Images enter image edit mode. Videos show profile, model, and resolution settings.",
         videoProfile: "Video Profile",
@@ -1047,7 +1165,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         readingFile: "ファイルを読み込み中...",
         processing: "アップロードして処理中...",
         imageReadyHint: "画像は Pillow でローカル編集され、指定フォルダーへ出力されます。",
-        videoReadyHint: "動画は pipeline ジョブとしてキューに追加されます。",
+        videoReadyHint: "動画はローカル編集 runner で処理され、完了後ギャラリーに表示されます。",
         adaptiveOptionsTitle: "ファイル判定後に設定を表示",
         adaptiveOptionsHelp: "画像は画像編集モードへ。動画の場合のみ Profile、モデル、解像度設定を表示します。",
         videoProfile: "動画 Profile",
@@ -1255,17 +1373,17 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         return;
       }
       target.innerHTML = job.phases.map((phase, index) => `
-        <div class="relative rounded-xl border ${phaseTone[phase.status]} p-4">
+        <div class="relative rounded-xl border ${phaseTone[phase.status] || phaseTone.waiting} p-4">
           <div class="mb-4 flex items-center justify-between">
             <span class="grid h-9 w-9 place-items-center rounded-lg bg-black/25">
-              <i data-lucide="${phaseIcon[phase.status]}" class="h-5 w-5 ${phase.status === "running" ? "animate-spin" : ""}"></i>
+              <i data-lucide="${phaseIcon[phase.status] || phaseIcon.waiting}" class="h-5 w-5 ${phase.status === "running" ? "animate-spin" : ""}"></i>
             </span>
             <span class="text-xs font-black text-slate-400">0${index + 1}</span>
           </div>
           <h3 class="font-black">${escapeHtml(phase.label)}</h3>
           <p class="mt-1 text-xs font-semibold text-slate-400">${escapeHtml(phase.detail)}</p>
           <div class="mt-4 h-2 overflow-hidden rounded-full bg-black/40">
-            <div class="h-full rounded-full ${phase.status === "completed" ? "bg-lime-300" : phase.status === "running" ? "bg-sky-300" : "bg-slate-700"}" style="width:${phase.progress}%"></div>
+            <div class="h-full rounded-full ${phase.status === "completed" ? "bg-lime-300" : phase.status === "running" ? "bg-sky-300" : phase.status === "failed" ? "bg-red-300" : "bg-slate-700"}" style="width:${phase.progress}%"></div>
           </div>
           <p class="mt-2 text-xs font-bold text-slate-400">${phase.progress}% · ${escapeHtml(phase.status)}</p>
         </div>
@@ -1844,6 +1962,9 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         renderStats();
         renderPipeline();
         lucide.createIcons();
+        if (payload.step === "render" && payload.status === "completed") {
+          setTimeout(refreshJobs, 700);
+        }
         return;
       }
       if (payload.type === "heartbeat") {
@@ -1887,7 +2008,9 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         phase.status = payload.status || phase.status;
         phase.progress = Number(payload.progress || 0);
       }
-      job.status = job.phases.every(item => item.status === "completed") ? "completed" : "running";
+      job.status = job.phases.some(item => item.status === "failed")
+        ? "failed"
+        : job.phases.every(item => item.status === "completed") ? "completed" : "running";
       job.updatedAt = payload.created_at || new Date().toISOString();
     }
 
@@ -1918,6 +2041,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
     function statusBadge(status) {
       if (status === "completed") return "bg-lime-300/15 text-lime-200";
       if (status === "running") return "bg-sky-300/15 text-sky-200";
+      if (status === "failed") return "bg-red-300/15 text-red-200";
       return "bg-orange-300/15 text-orange-200";
     }
 
@@ -2791,37 +2915,39 @@ def frontend_phases(manifest: dict) -> list[dict]:
     return [
         {
             "key": "asr",
-            "label": "語音識別",
-            "detail": "ASR - Faster-Whisper",
-            "status": phase_status(stages, ["transcribe", "asr"]),
-            "progress": phase_progress(stages, ["transcribe", "asr"]),
+            "label": "影片分析",
+            "detail": "FFprobe Analyze",
+            "status": phase_status(stages, ["analyze"]),
+            "progress": phase_progress(stages, ["analyze"]),
         },
         {
             "key": "llm",
-            "label": "語意理解",
-            "detail": "LLM - Ollama",
-            "status": phase_status(stages, ["select_clips"]),
-            "progress": phase_progress(stages, ["select_clips"]),
+            "label": "編輯計畫",
+            "detail": "Prompt Plan",
+            "status": phase_status(stages, ["edit_plan"]),
+            "progress": phase_progress(stages, ["edit_plan"]),
         },
         {
             "key": "vision",
-            "label": "智慧裁剪",
-            "detail": "Vision",
-            "status": phase_status(stages, ["crop"]),
-            "progress": phase_progress(stages, ["crop"]),
+            "label": "影格處理",
+            "detail": "Local Frame Edit",
+            "status": phase_status(stages, ["video_edit"]),
+            "progress": phase_progress(stages, ["video_edit"]),
         },
         {
             "key": "render",
             "label": "影音渲染",
             "detail": "FFmpeg",
-            "status": phase_status(stages, ["subtitle", "render"]),
-            "progress": phase_progress(stages, ["subtitle", "render"]),
+            "status": phase_status(stages, ["render"]),
+            "progress": phase_progress(stages, ["render"]),
         },
     ]
 
 
 def phase_status(stages: dict, keys: list[str]) -> str:
     values = [stages.get(key) for key in keys]
+    if any(value == "failed" for value in values):
+        return "failed"
     if values and all(value == "completed" for value in values):
         return "completed"
     if any(value == "running" for value in values):
@@ -3002,6 +3128,7 @@ def create_preview_job(output_root: Path, payload: dict) -> dict:
         "config": {
             "profile": Path(profile).stem,
             "effective_config_path": "reports/effective_config.json",
+            "pipeline": "dashboard_preview",
         },
         "stages": {},
         "errors": [],
@@ -3088,6 +3215,7 @@ def create_media_job(output_root: Path, payload: dict) -> dict:
         "config": {
             "profile": Path(profile).stem,
             "effective_config_path": "reports/effective_config.json",
+            "pipeline": "video_edit" if media_type == "video" else "image_edit",
         },
         "stages": {},
         "errors": [],
@@ -3143,11 +3271,13 @@ def create_media_job(output_root: Path, payload: dict) -> dict:
         publish_pipeline_log(job_id, f"[image] {message}")
         publish_pipeline_status(job_id, "render", "completed", 100)
     else:
+        manifest["status"] = "running"
         manifest["stages"] = {"upload": "completed"}
         write_json_file(job_dir / "job_manifest.json", manifest)
-        command = f'python main.py run-all --config {profile} --input "{input_path}" --job-id {job_id}'
-        message = "影片已上傳並建立 queued job；目前尚未執行實際影片編輯或輸出。"
-        publish_pipeline_log(job_id, f"[video] Uploaded {filename}; next command: {command}")
+        command = f"background local video_edit runner: {job_id}"
+        message = "影片已上傳，已啟動本地影片編輯 runner；完成後會自動出現在產出物畫廊。"
+        publish_pipeline_log(job_id, f"[video] Uploaded {filename}; starting local video edit runner")
+        start_video_edit_worker(output_root, job_id)
 
     return {
         "status": "ok",
