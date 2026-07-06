@@ -1107,6 +1107,17 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       document.getElementById("settingsModal").classList.add("hidden");
     }
 
+    function finishSettingsSave(message) {
+      applySettingsToUi();
+      const imageOutput = document.querySelector('input[name="imageOutputDirectory"]');
+      if (imageOutput) imageOutput.value = userSettings.defaultOutputDirectory;
+      renderGallery();
+      lucide.createIcons();
+      document.getElementById("settingsHint").textContent = message;
+      appendLogLine(`[settings] ${message}`);
+      closeSettingsModal();
+    }
+
     function render() {
       renderStats();
       renderJobs();
@@ -1272,6 +1283,9 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
     document.getElementById("settingsModal").addEventListener("click", event => {
       if (event.target.id === "settingsModal") closeSettingsModal();
     });
+    document.addEventListener("keydown", event => {
+      if (event.key === "Escape") closeSettingsModal();
+    });
     document.getElementById("settingsForm").addEventListener("submit", async event => {
       event.preventDefault();
       userSettings = {
@@ -1282,12 +1296,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       };
       try {
         await saveSettingsToServer();
-        applySettingsToUi();
-        const imageOutput = document.querySelector('input[name="imageOutputDirectory"]');
-        if (imageOutput) imageOutput.value = userSettings.defaultOutputDirectory;
-        renderGallery();
-        lucide.createIcons();
-        document.getElementById("settingsHint").textContent = t("settingsSaved");
+        finishSettingsSave(t("settingsSaved"));
       } catch (error) {
         document.getElementById("settingsHint").textContent = error.message;
         appendLogLine(`[settings] ${error.message}`);
@@ -1301,10 +1310,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       userSettings = { ...DEFAULT_SETTINGS };
       try {
         await saveSettingsToServer();
-        applySettingsToUi();
-        renderGallery();
-        lucide.createIcons();
-        document.getElementById("settingsHint").textContent = t("settingsReset");
+        finishSettingsSave(t("settingsReset"));
       } catch (error) {
         document.getElementById("settingsHint").textContent = error.message;
         appendLogLine(`[settings] ${error.message}`);
