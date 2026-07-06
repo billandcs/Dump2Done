@@ -718,6 +718,9 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
                 <img id="uploadImagePreview" class="hidden h-44 w-full object-contain" alt="Selected image preview">
                 <video id="uploadVideoPreview" class="hidden h-44 w-full object-contain" muted playsinline controls></video>
                 <span class="absolute left-2 top-2 rounded-md bg-black/70 px-2 py-1 text-[11px] font-black text-lime-200">Preview</span>
+                <button id="clearMediaSelection" class="absolute right-2 top-2 inline-flex items-center gap-1 rounded-md border border-red-300/35 bg-black/75 px-2 py-1 text-[11px] font-black text-red-100 hover:bg-red-300/15" type="button">
+                  <i data-lucide="x" class="h-3 w-3"></i><span data-i18n="clearMediaSelection">移除</span>
+                </button>
               </span>
               <span class="grid gap-1">
                 <strong id="mediaFileName" class="truncate text-sm">上傳想要編輯的圖片或影片</strong>
@@ -1028,6 +1031,8 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         uploadMedia: "上傳圖片或影片",
         uploadMediaPrompt: "上傳想要編輯的圖片或影片",
         autoDetectHint: "系統會自動判斷 image / video",
+        clearMediaSelection: "移除",
+        mediaSelectionCleared: "已移除選擇的檔案，可重新上傳。",
         editPrompt: "編輯描述",
         imagePromptPlaceholder: "描述想做的圖片編輯，例如：往左旋轉90度、變亮一點、轉成黑白、銳化。",
         videoPromptPlaceholder: "描述影片編輯需求，例如：把衣服換成白色、轉成直式、保留原音訊。",
@@ -1138,6 +1143,8 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         uploadMedia: "Upload Image or Video",
         uploadMediaPrompt: "Upload an image or video to edit",
         autoDetectHint: "The system will detect image / video automatically",
+        clearMediaSelection: "Remove",
+        mediaSelectionCleared: "Removed the selected file. You can upload another one.",
         editPrompt: "Edit prompt",
         imagePromptPlaceholder: "Describe the image edit, e.g. rotate left 90 degrees, brighten, grayscale, sharpen.",
         videoPromptPlaceholder: "Describe the video edit, e.g. change clothing to white, make it vertical, keep original audio.",
@@ -1248,6 +1255,8 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         uploadMedia: "画像または動画をアップロード",
         uploadMediaPrompt: "編集したい画像または動画をアップロード",
         autoDetectHint: "画像 / 動画を自動判定します",
+        clearMediaSelection: "削除",
+        mediaSelectionCleared: "選択したファイルを削除しました。別のファイルをアップロードできます。",
         editPrompt: "編集プロンプト",
         imagePromptPlaceholder: "画像編集を入力します。例：左に90度回転、明るくする、白黒化、シャープ化。",
         videoPromptPlaceholder: "動画編集を入力します。例：服を白にする、縦型にする、元音声を保持する。",
@@ -1738,6 +1747,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
     const mediaResultPath = document.getElementById("mediaResultPath");
     const mediaResultLink = document.getElementById("mediaResultLink");
     const openMediaResultFolder = document.getElementById("openMediaResultFolder");
+    const clearMediaSelectionButton = document.getElementById("clearMediaSelection");
     let currentMediaType = "unknown";
     let lastMediaOutputFolder = "";
     document.querySelectorAll(".prompt-chip").forEach(button => {
@@ -1748,6 +1758,11 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
     });
     openMediaResultFolder.addEventListener("click", () => {
       if (lastMediaOutputFolder) openFolder(lastMediaOutputFolder, "media output");
+    });
+    clearMediaSelectionButton.addEventListener("click", event => {
+      event.preventDefault();
+      event.stopPropagation();
+      resetMediaSelection(true);
     });
     dropZone.addEventListener("dragover", event => {
       event.preventDefault();
@@ -1804,6 +1819,31 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         videoPreview.classList.remove("hidden");
       }
     });
+
+    function resetMediaSelection(showHint) {
+      const pill = document.getElementById("mediaTypePill");
+      const name = document.getElementById("mediaFileName");
+      const hint = document.getElementById("mediaFileHint");
+      const emptyState = document.getElementById("mediaEmptyState");
+      const previewState = document.getElementById("mediaPreviewState");
+      const imagePreview = document.getElementById("uploadImagePreview");
+      const videoPreview = document.getElementById("uploadVideoPreview");
+      mediaFileInput.value = "";
+      clearUploadPreview();
+      hideMediaResult();
+      pill.textContent = t("autoDetect");
+      name.textContent = t("uploadMediaPrompt");
+      hint.textContent = t("autoDetectHint");
+      emptyState.classList.remove("hidden");
+      previewState.classList.add("hidden");
+      imagePreview.classList.add("hidden");
+      videoPreview.classList.add("hidden");
+      updateEditorMode("unknown");
+      if (showHint) {
+        document.getElementById("formHint").textContent = t("mediaSelectionCleared");
+      }
+      lucide.createIcons();
+    }
 
     document.getElementById("mediaForm").addEventListener("submit", async event => {
       event.preventDefault();
