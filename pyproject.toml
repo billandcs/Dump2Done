@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dump2done"
+version = "0.1.0"
+description = "Local-first AI video post-production pipeline."
+requires-python = ">=3.10"
+dependencies = [
+  "PyYAML>=6.0.1",
+]
+
+[project.optional-dependencies]
+mvp = [
+  "faster-whisper>=1.0.0",
+  "ctranslate2>=4.0.0",
+  "opencv-python>=4.8.0",
+  "mediapipe>=0.10.0",
+  "requests>=2.31.0",
+]
+dev = [
+  "pytest>=8.0.0",
+  "ruff>=0.5.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
