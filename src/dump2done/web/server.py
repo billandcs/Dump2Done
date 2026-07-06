@@ -2753,26 +2753,9 @@ def wants_json(accept_header: str, query: dict[str, list[str]]) -> bool:
 
 def render_env_dashboard(report: dict) -> str:
     basic = report.get("basic", {})
-    compute = report.get("compute", {})
-    memory = compute.get("memory", {})
-    disk = compute.get("disk", {})
-    gpu = report.get("gpu_cuda", {})
-    ffmpeg = report.get("ffmpeg_codecs", {})
     asr = report.get("asr", {})
     llm = report.get("llm", {})
     qualcomm = report.get("qualcomm_platform", {})
-    amd = report.get("amd_platform", {})
-    intel = report.get("intel_platform", {})
-    q_ready = report.get("qualcomm_readiness", {})
-    n_ready = report.get("nvidia_readiness", {})
-    amd_ready = report.get("amd_readiness", {})
-    intel_ready = report.get("intel_readiness", {})
-    hardware = report.get("hardware_level", {})
-
-    memory_used = clamp_percent(memory.get("percent_used"))
-    disk_total = safe_float(disk.get("cwd_total_gb"))
-    disk_free = safe_float(disk.get("cwd_free_gb"))
-    disk_used = clamp_percent(((disk_total - disk_free) / disk_total * 100) if disk_total else 0)
     emulated = bool(qualcomm.get("likely_emulated_python"))
 
     software_cards = "\n".join(
@@ -2816,7 +2799,7 @@ def render_env_dashboard(report: dict) -> str:
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Dump2Done Platform Environment Report</title>
+  <title>Dump2Done Environment Executive Summary</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
   <script>
@@ -2840,76 +2823,56 @@ def render_env_dashboard(report: dict) -> str:
   <main class="mx-auto max-w-7xl px-5 py-6 lg:px-8">
     <header class="mb-6 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
       <div>
-        <div class="mb-3 inline-flex items-center gap-2 rounded-full border border-lime-300/30 bg-lime-300/10 px-3 py-1 text-xs font-semibold text-lime-200">
-          <i data-lucide="radar" class="h-4 w-4"></i>
-          Live probe generated on request
+        <div class="mb-3 inline-flex items-center gap-2 rounded-full border border-sky-300/25 bg-sky-300/10 px-3 py-1 text-xs font-semibold text-sky-100">
+          <i data-lucide="clipboard-check" class="h-4 w-4"></i>
+          Executive Summary
         </div>
-        <h1 class="text-3xl font-black tracking-tight md:text-5xl">Platform Environment Report</h1>
+        <h1 class="text-3xl font-black tracking-tight md:text-5xl">Environment Executive Summary</h1>
         <p class="mt-2 max-w-3xl text-sm leading-6 text-slate-400">
-          即時診斷 Dump2Done 本地硬體、AI runtime、依賴元件與目前平台 readiness。
+          只保留會影響 Dump2Done 本地部署與下一步施工判斷的重點；可變動的即時數字不再放第一屏干擾判斷。
         </p>
       </div>
       <div class="flex flex-wrap gap-2">
         <a href="/" class="rounded-xl border border-slate-700 bg-panel2 px-4 py-2 text-sm font-bold text-slate-200 hover:border-sky-400">Back to Dashboard</a>
-        <button id="refreshEnv" class="rounded-xl border border-lime-300/40 bg-lime-300/10 px-4 py-2 text-sm font-bold text-lime-200 hover:bg-lime-300/20" type="button">
-          重新掃描即時數據
-        </button>
       </div>
     </header>
 
     __WARNING__
 
-    <section class="mt-5 grid gap-4 lg:grid-cols-4">
-      __HERO_CARD__
-      __MEMORY_CARD__
-      __DISK_CARD__
-      __PYTHON_CARD__
-    </section>
+    __EXECUTIVE_SUMMARY__
 
     <section class="mt-5 grid gap-5 lg:grid-cols-[1.1fr_1.4fr]">
       __PRIORITY_SECTION__
       __LOCAL_DEPLOYMENT_SECTION__
     </section>
 
-    __ACTIVE_READINESS_SECTION__
-
-    <section class="mt-5 rounded-2xl border border-slate-800 bg-panel/95 p-5 shadow-xl">
-      <div class="mb-4 flex items-center justify-between gap-3">
-        <div>
-          <p class="text-xs font-bold uppercase tracking-wide text-slate-500">Dependency Matrix</p>
-          <h2 class="mt-1 text-xl font-black">軟體依賴元件清單</h2>
-        </div>
-        <i data-lucide="layout-grid" class="h-6 w-6 text-lime-300"></i>
-      </div>
-      <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">__SOFTWARE_CARDS__</div>
-    </section>
-
-    <section class="mt-5 grid gap-5 lg:grid-cols-3">
-      __CPU_CARD__
-      __AI_CARD__
-      __RECOMMEND_CARD__
-    </section>
-
     <section class="mt-5 rounded-2xl border border-slate-800 bg-panel/70 p-4">
       <details>
         <summary class="cursor-pointer text-sm font-bold text-slate-400 hover:text-slate-200">
-          Debug JSON（通常不用看，給工程除錯）
+          工程細節：依賴元件與原始 JSON
         </summary>
-        <p class="mt-2 text-xs leading-5 text-slate-500">Dashboard 已把重要資訊整理在上方；原始 JSON 只保留給開發時比對欄位。</p>
+        <div class="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">__SOFTWARE_CARDS__</div>
+        <p class="mt-4 text-xs leading-5 text-slate-500">上方已整理成決策摘要；以下資訊只在安裝或除錯時需要看。</p>
         <a href="/env?format=json" class="mt-3 inline-flex rounded-lg border border-slate-700 px-3 py-2 text-xs font-bold text-slate-300 hover:border-lime-300/40 hover:text-lime-200">Open raw JSON</a>
+      </details>
+    </section>
+
+    <section class="mt-4 rounded-2xl border border-slate-800 bg-panel/50 p-4">
+      <details>
+        <summary class="cursor-pointer text-sm font-bold text-slate-400 hover:text-slate-200">
+          已從主畫面移除的項目
+        </summary>
+        <ul class="mt-3 grid gap-2 text-xs leading-5 text-slate-500">
+          <li>Memory/Disk 即時數字：變化小、解釋成本高，除非要做壓力監控，否則不該佔第一屏。</li>
+          <li>重新掃描按鈕：目前只是整頁重載，沒有足夠回饋感，先移除。</li>
+          <li>Readiness Tier 大卡：Q1 這種代碼對使用者不直覺，改由摘要文字與施工清單取代。</li>
+          <li>CPU/AI runtime 細項：保留在 JSON/依賴折疊區，避免首頁像硬體報表。</li>
+        </ul>
       </details>
     </section>
   </main>
   <script>
     if (window.lucide) { window.lucide.createIcons(); }
-    const refresh = document.getElementById("refreshEnv");
-    if (refresh) {
-      refresh.addEventListener("click", () => {
-        refresh.textContent = "重新掃描中...";
-        refresh.disabled = true;
-        window.location.href = `/env?refresh=${Date.now()}`;
-      });
-    }
   </script>
 </body>
 </html>
@@ -2917,34 +2880,102 @@ def render_env_dashboard(report: dict) -> str:
 
     replacements = {
         "__WARNING__": warning_html,
-        "__HERO_CARD__": env_summary_card("Hardware Level", hardware.get("level", "unknown"), hardware.get("reason", "No reason available."), "activity", "lime"),
-        "__MEMORY_CARD__": progress_card("Memory Used", f"{memory_used:.0f}%", memory_used, "memory-stick", "lime" if memory_used < 70 else "orange"),
-        "__DISK_CARD__": progress_card("Workspace Disk Used", f"{disk_used:.0f}%", disk_used, "hard-drive", "lime" if disk_used < 75 else "orange", f"{disk_free:.1f} GB free"),
-        "__PYTHON_CARD__": env_summary_card("Python Runtime", basic.get("python", {}).get("version", "unknown"), "x64 emulation likely" if emulated else "native or non-ARM path", "terminal", "orange" if emulated else "lime"),
+        "__EXECUTIVE_SUMMARY__": env_executive_summary(report),
         "__PRIORITY_SECTION__": env_priority_section(report),
         "__LOCAL_DEPLOYMENT_SECTION__": local_deployment_section(report),
-        "__ACTIVE_READINESS_SECTION__": active_readiness_section(report),
         "__SOFTWARE_CARDS__": software_cards,
-        "__CPU_CARD__": detail_card("CPU / OS", "cpu", [
-            ("CPU", compute.get("cpu", {}).get("model", "unknown")),
-            ("Threads", compute.get("cpu", {}).get("logical_threads", "unknown")),
-            ("OS", f"{basic.get('os', {}).get('system', 'unknown')} {basic.get('os', {}).get('release', '')}"),
-            ("Video Controllers", ", ".join(amd.get("video_controllers") or intel.get("video_controllers") or []) or "unknown"),
-        ]),
-        "__AI_CARD__": detail_card("AI Runtime", "brain", [
-            ("ASR", "faster-whisper installed" if asr.get("faster_whisper_installed") else "missing"),
-            ("Ollama API", "available" if llm.get("ollama_api", {}).get("available") else "unavailable"),
-            ("Local models", ", ".join(llm.get("ollama_api", {}).get("models", [])) or "none"),
-        ]),
-        "__RECOMMEND_CARD__": detail_card("Optimization Notes", "wrench", [
-            ("Profile", active_platform_profile(report)),
-            ("Encoder", platform_encoder_summary(ffmpeg)),
-            ("Next", "native ARM64 Python + ONNX Runtime QNN/DirectML validation" if emulated else "ASR and clip pipeline profiling"),
-        ]),
     }
     for key, value in replacements.items():
         html_doc = html_doc.replace(key, value)
     return html_doc
+
+
+def env_executive_summary(report: dict) -> str:
+    basic = report.get("basic", {})
+    compute = report.get("compute", {})
+    qualcomm = report.get("qualcomm_platform", {})
+    ffmpeg = report.get("ffmpeg_codecs", {})
+    image = report.get("image_edit", {})
+    asr = report.get("asr", {})
+    llm = report.get("llm", {})
+    hardware = report.get("hardware_level", {})
+    memory = compute.get("memory", {})
+    disk = compute.get("disk", {})
+
+    emulated = bool(qualcomm.get("likely_emulated_python"))
+    local_items = local_deployment_items(report)
+    complete = sum(1 for item in local_items if item["state"] == "complete")
+    total = len(local_items)
+    platform_text = "Qualcomm Windows on ARM64" if qualcomm.get("is_qualcomm_cpu") else hardware.get("reason", "Unknown local platform")
+    python_text = f"Python {basic.get('python', {}).get('version', 'unknown')}"
+    python_state = "x64 模擬層，最優先修正" if emulated else "native 或非 ARM 模擬路線"
+    runner_state = "可做本地圖片/影片 MVP" if image.get("pillow_installed") and basic.get("ffmpeg", {}).get("available") else "基礎 runner 依賴未完整"
+    ai_state_parts = []
+    ai_state_parts.append("ASR 已就緒" if asr.get("faster_whisper_installed") else "ASR 未完成")
+    ai_state_parts.append("LLM 已連線" if llm.get("ollama_api", {}).get("available") else "LLM 未連線")
+    ai_state = "、".join(ai_state_parts)
+    resource_note = f"背景資訊：記憶體 {memory.get('percent_used', 'unknown')}% 使用中；工作區剩餘 {disk.get('cwd_free_gb', 'unknown')} GB。這些數字只做參考，不作為主要決策。"
+
+    cards = [
+        executive_card(
+            "平台判斷",
+            "Qualcomm 本地路線" if qualcomm.get("is_qualcomm_cpu") else str(hardware.get("level", "Unknown")),
+            str(platform_text),
+            "cpu",
+            "lime",
+        ),
+        executive_card(
+            "最大阻塞",
+            "Python Runtime",
+            f"{python_text}；{python_state}",
+            "terminal",
+            "orange" if emulated else "lime",
+        ),
+        executive_card(
+            "目前可用",
+            runner_state,
+            f"本地能力完成度 {complete}/{total}；CPU 編碼：{'可用' if ffmpeg.get('cpu_encoding_available') else '待確認'}。",
+            "check-circle-2",
+            "lime" if complete else "orange",
+        ),
+        executive_card(
+            "AI 能力",
+            ai_state,
+            "ASR/LLM 影響未來自動理解與剪輯規劃；不阻塞目前 deterministic 圖片/影片輸出。",
+            "brain-circuit",
+            "sky",
+        ),
+    ]
+    cards_html = "\n".join(cards)
+
+    return f"""
+    <section class="mt-5 rounded-2xl border border-slate-800 bg-panel/95 p-5 shadow-xl">
+      <div class="mb-4 flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+        <div>
+          <p class="text-xs font-bold uppercase tracking-wide text-sky-300">Executive Summary</p>
+          <h2 class="mt-1 text-2xl font-black">現在真正該看的結論</h2>
+        </div>
+        <p class="max-w-xl text-xs leading-5 text-slate-500">{html.escape(resource_note)}</p>
+      </div>
+      <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-4">{cards_html}</div>
+    </section>
+    """
+
+
+def executive_card(title: str, value: str, description: str, icon: str, tone: str) -> str:
+    tone_classes = tone_palette(tone)
+    return f"""
+    <article class="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
+      <div class="flex items-start justify-between gap-3">
+        <div>
+          <p class="text-xs font-bold uppercase tracking-wide text-slate-500">{html.escape(title)}</p>
+          <h3 class="mt-2 text-lg font-black {tone_classes['text']}">{html.escape(value)}</h3>
+        </div>
+        <span class="rounded-lg {tone_classes['soft']} p-2 {tone_classes['text']}"><i data-lucide="{icon}" class="h-5 w-5"></i></span>
+      </div>
+      <p class="mt-3 text-xs leading-5 text-slate-400">{html.escape(description)}</p>
+    </article>
+    """
 
 
 def env_summary_card(title: str, value: object, description: object, icon: str, tone: str) -> str:
