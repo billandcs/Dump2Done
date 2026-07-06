@@ -739,13 +739,13 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         </span>
         <span>
           <span class="block text-xl font-black tracking-normal">Dump2Done</span>
-          <span class="flex items-center gap-2 text-xs font-semibold text-lime-300"><span class="h-2 w-2 rounded-full bg-lime-300"></span><span data-i18n="localControlPlane">Local Control Plane</span></span>
+          <span class="mt-1 inline-flex items-center gap-2 rounded-full border border-lime-300/25 bg-lime-300/10 px-2.5 py-1 text-[11px] font-bold text-lime-200">
+            <span class="h-1.5 w-1.5 rounded-full bg-lime-300 shadow-[0_0_12px_rgba(190,242,100,0.8)]"></span>
+            <span data-i18n="localControlPlane">本機服務已啟動</span>
+          </span>
         </span>
       </a>
       <nav class="flex items-center gap-2">
-        <a href="/" class="inline-flex items-center gap-2 rounded-lg border border-sky-300/35 bg-sky-400/12 px-4 py-2 text-sm font-bold text-sky-100">
-          <i data-lucide="layout-dashboard" class="h-4 w-4"></i><span data-i18n="dashboard">控制台</span>
-        </a>
         <a href="/env" class="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-4 py-2 text-sm font-bold text-slate-200 hover:border-lime-300/40 hover:text-lime-200">
           <i data-lucide="activity" class="h-4 w-4"></i><span data-i18n="environment">環境診斷</span>
         </a>
@@ -1095,7 +1095,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
     };
     const I18N = {
       "zh-Hant": {
-        localControlPlane: "Local Control Plane",
+        localControlPlane: "本機服務已啟動",
         dashboard: "控制台",
         environment: "環境診斷",
         uploadMedia: "上傳圖片或影片",
@@ -1230,7 +1230,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         onlineFallbackPolicyHelp: "控制遇到本地資源做不到時是否可使用線上服務。只提示代表系統只告知需要線上能力，不會自動送出；完全關閉代表永遠不走線上；每次詢問代表未來需要你確認後才會送出。"
       },
       en: {
-        localControlPlane: "Local Control Plane",
+        localControlPlane: "Local service ready",
         dashboard: "Dashboard",
         environment: "Environment",
         uploadMedia: "Upload Image or Video",
@@ -1365,7 +1365,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         onlineFallbackPolicyHelp: "Controls whether online services may be used when local resources cannot complete a task. Warn only never auto-sends; disabled blocks online fallback; ask each time means future online use requires your confirmation."
       },
       ja: {
-        localControlPlane: "ローカル制御プレーン",
+        localControlPlane: "ローカルサービス稼働中",
         dashboard: "ダッシュボード",
         environment: "環境診断",
         uploadMedia: "画像または動画をアップロード",
