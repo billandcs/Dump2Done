@@ -731,6 +731,24 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       background: linear-gradient(90deg, transparent, rgba(255,255,255,0.55), transparent);
       animation: d2d-flow 1.15s linear infinite;
     }
+    .d2d-scrollbar {
+      scrollbar-width: thin;
+      scrollbar-color: rgba(148, 163, 184, 0.32) transparent;
+    }
+    .d2d-scrollbar::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+    .d2d-scrollbar::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    .d2d-scrollbar::-webkit-scrollbar-thumb {
+      background: rgba(148, 163, 184, 0.26);
+      border-radius: 999px;
+    }
+    .d2d-scrollbar::-webkit-scrollbar-thumb:hover {
+      background: rgba(125, 211, 252, 0.42);
+    }
   </style>
 </head>
 <body class="min-h-screen bg-carbon text-slate-100 antialiased">
@@ -881,15 +899,20 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         </form>
       </article>
 
-      <article class="min-w-0 overflow-hidden rounded-xl border border-white/10 bg-panel/92 p-5">
-        <div class="mb-4 flex items-center justify-between">
-          <div>
-            <h2 class="text-lg font-black" data-i18n="jobQueue">任務佇列</h2>
-            <p class="mt-1 text-xs leading-5 text-slate-500" data-i18n="jobQueueHelp">藍色是目前追蹤；Running 會自動排在前面。</p>
+      <article class="min-w-0 overflow-hidden rounded-xl border border-white/10 bg-panel/80 p-4">
+        <div class="mb-3 flex items-start justify-between gap-3">
+          <div class="min-w-0">
+            <div class="flex items-center gap-2">
+              <i data-lucide="list-checks" class="h-4 w-4 text-sky-300"></i>
+              <h2 class="truncate text-base font-black" data-i18n="jobQueue">任務佇列</h2>
+            </div>
+            <p class="mt-1 text-xs leading-5 text-slate-500" data-i18n="jobQueueHelp">只顯示任務摘要；點選後在右側查看完整流程。</p>
           </div>
-          <button id="refreshJobs" class="rounded-lg border border-white/10 px-3 py-2 text-xs font-black text-slate-300 hover:border-sky-300/50">Refresh</button>
+          <button id="refreshJobs" class="inline-grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-white/10 bg-white/[0.03] text-slate-300 hover:border-sky-300/50 hover:text-sky-200" type="button" title="Refresh" aria-label="Refresh">
+            <i data-lucide="refresh-cw" class="h-4 w-4"></i>
+          </button>
         </div>
-        <div id="jobList" class="grid max-h-[360px] gap-2 overflow-y-auto pr-1"></div>
+        <div id="jobList" class="d2d-scrollbar grid max-h-[320px] min-w-0 gap-2 overflow-y-auto overflow-x-hidden pr-1"></div>
       </article>
     </section>
 
@@ -1162,7 +1185,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         createImage: "建立圖片輸出",
         createVideo: "建立影片剪輯任務",
         jobQueue: "任務佇列",
-        jobQueueHelp: "藍色是目前追蹤；Running 會自動排在前面。",
+        jobQueueHelp: "只顯示任務摘要；點選後在右側查看完整流程。",
         activeTracking: "目前追蹤",
         jobState: "狀態",
         progressShort: "進度",
@@ -1337,7 +1360,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         createImage: "Create Image Output",
         createVideo: "Create Video Job",
         jobQueue: "Job Queue",
-        jobQueueHelp: "Blue is the tracked job. Running jobs are shown first.",
+        jobQueueHelp: "Shows compact job summaries. Select one to inspect the full workflow on the right.",
         activeTracking: "Tracking",
         jobState: "State",
         progressShort: "Progress",
@@ -1512,7 +1535,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         createImage: "画像出力を作成",
         createVideo: "動画ジョブを作成",
         jobQueue: "ジョブキュー",
-        jobQueueHelp: "青が現在追跡中のジョブです。Running は先頭に表示します。",
+        jobQueueHelp: "ジョブ概要のみを表示します。選択すると右側で詳細フローを確認できます。",
         activeTracking: "追跡中",
         jobState: "状態",
         progressShort: "進捗",
@@ -1920,18 +1943,24 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       });
       list.innerHTML = orderedJobs.map(job => {
         const currentPhase = activePhase(job);
-        const activeClass = job.id === activeJobId ? "border-sky-300/55 bg-sky-300/10" : job.status === "running" ? "border-sky-300/30 bg-sky-300/[0.05]" : job.status === "interrupted" ? "border-orange-300/25 bg-orange-300/[0.04]" : "border-white/10 bg-white/[0.03] hover:border-white/20";
+        const activeClass = job.id === activeJobId ? "border-sky-300/55 bg-sky-300/10 shadow-[inset_3px_0_0_rgba(125,211,252,.85)]" : job.status === "running" ? "border-sky-300/25 bg-sky-300/[0.045]" : job.status === "interrupted" ? "border-orange-300/25 bg-orange-300/[0.04]" : "border-white/10 bg-white/[0.025] hover:border-white/20 hover:bg-white/[0.045]";
+        const phaseText = currentPhase ? `${currentPhase.label} · ${currentPhase.progress}%` : job.profile || t("unknownProfile");
+        const pulseDot = job.status === "running"
+          ? '<span class="h-2 w-2 shrink-0 rounded-full bg-sky-300 shadow-[0_0_14px_rgba(125,211,252,.8)]"></span>'
+          : job.status === "interrupted"
+          ? '<span class="h-2 w-2 shrink-0 rounded-full bg-orange-300 shadow-[0_0_14px_rgba(253,186,116,.75)]"></span>'
+          : "";
         return `
-        <button data-job-id="${escapeAttr(job.id)}" class="job-pick w-full rounded-lg border ${activeClass} p-3 text-left">
-          <div class="flex items-center justify-between gap-3">
-            <strong class="min-w-0 truncate text-sm">${escapeHtml(displayJobName(job.id))}</strong>
-            <span class="rounded-md px-2 py-1 text-[11px] font-black ${statusBadge(job.status)}">${escapeHtml(statusLabel(job.status))}</span>
+        <button data-job-id="${escapeAttr(job.id)}" class="job-pick group min-w-0 w-full overflow-hidden rounded-lg border ${activeClass} p-3 text-left transition">
+          <div class="flex min-w-0 items-center gap-2">
+            ${pulseDot}
+            <strong class="min-w-0 flex-1 truncate text-sm font-black text-slate-100">${escapeHtml(displayJobName(job.id))}</strong>
+            <span class="shrink-0 whitespace-nowrap rounded-full px-2 py-1 text-[10px] font-black ${statusBadge(job.status)}">${escapeHtml(statusLabel(job.status))}</span>
           </div>
           <p class="mt-2 min-w-0 truncate text-xs text-slate-400" title="${escapeAttr(job.videoPath || t("noVideoPath"))}">${escapeHtml(compactPath(job.videoPath || t("noVideoPath")))}</p>
-          <div class="mt-2 flex items-center justify-between gap-2">
-            <p class="min-w-0 truncate text-xs font-bold text-slate-500">${escapeHtml(currentPhase ? `${currentPhase.label} · ${currentPhase.progress}%` : job.profile || t("unknownProfile"))}</p>
-            ${job.status === "running" ? '<span class="h-2 w-2 shrink-0 rounded-full bg-sky-300 shadow-[0_0_14px_rgba(125,211,252,.8)]"></span>' : ""}
-            ${job.status === "interrupted" ? '<span class="h-2 w-2 shrink-0 rounded-full bg-orange-300 shadow-[0_0_14px_rgba(253,186,116,.75)]"></span>' : ""}
+          <div class="mt-3 flex min-w-0 items-center gap-2">
+            <span class="h-1.5 w-1.5 shrink-0 rounded-full ${job.id === activeJobId ? "bg-sky-300" : "bg-slate-600"}"></span>
+            <p class="min-w-0 flex-1 truncate text-[11px] font-bold text-slate-500">${escapeHtml(phaseText)}</p>
           </div>
         </button>
       `;
