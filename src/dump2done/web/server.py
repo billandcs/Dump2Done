@@ -895,7 +895,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
           <button id="mediaSubmit" class="mt-2 inline-flex h-12 items-center justify-center gap-2 rounded-lg bg-lime-300 px-4 text-sm font-black text-slate-950 hover:bg-lime-200 disabled:cursor-not-allowed disabled:bg-slate-600 disabled:text-slate-300" type="submit">
             <i data-lucide="sparkles" class="h-5 w-5"></i><span data-i18n="createEdit">建立 / 編輯</span>
           </button>
-          <p id="formHint" class="min-h-5 text-xs font-semibold text-slate-400"></p>
+          <div id="formHint" class="min-h-5 text-xs font-semibold text-slate-400"></div>
         </form>
       </article>
 
@@ -1206,6 +1206,17 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         notCompleted: "未完成",
         noLiveJobFlow: "目前沒有執行中的任務。上傳圖片或影片後，這裡才會出現即時工作流。",
         rerunSuggestion: "可調整提示詞、切換 provider，或重新上傳建立新任務。",
+        failureTitle: "這次沒有產出成品",
+        failureReason: "主要原因",
+        suggestedFix: "建議處理",
+        technicalDetails: "技術細節",
+        generativeRequiredTitle: "需要生成式圖片模型",
+        generativeRequiredReason: "這個提示不是旋轉、亮度、黑白這類本地濾鏡；它需要 Stable Diffusion、ComfyUI 或 OpenAI Images 這類生成式模型。",
+        automatic1111Offline: "Automatic1111 沒有連上：請啟動 WebUI，確認使用 --api，並檢查網址是否為 http://127.0.0.1:7860。",
+        comfyuiNoCheckpoint: "ComfyUI 有回應，但目前沒有可用 checkpoint：請安裝模型，或在 ComfyUI 中確認 CheckpointLoaderSimple 看得到模型。",
+        openaiKeyMissing: "OpenAI Images 尚未設定：如果要走雲端 fallback，請設定 OPENAI_API_KEY，並在設定中允許線上 fallback。",
+        failureGenericFix: "請調整 prompt、切換 provider，或先部署一個本地生成式圖片服務後重試。",
+        interruptedFix: "這個任務已中斷；請重新上傳或建立新任務。",
         runnerInterrupted: "runner 已中斷",
         restartRequired: "需要重新建立或重跑任務",
         statusRunning: "執行中",
@@ -1381,6 +1392,17 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         notCompleted: "Not completed",
         noLiveJobFlow: "No job is currently running. Upload an image or video to start live workflow tracking.",
         rerunSuggestion: "Adjust the prompt, switch provider, or upload again to create a new job.",
+        failureTitle: "No output was produced",
+        failureReason: "Main reason",
+        suggestedFix: "Suggested fix",
+        technicalDetails: "Technical details",
+        generativeRequiredTitle: "Generative image model required",
+        generativeRequiredReason: "This prompt is not a local filter such as rotate, brightness, or grayscale. It needs Stable Diffusion, ComfyUI, or OpenAI Images.",
+        automatic1111Offline: "Automatic1111 is not reachable. Start WebUI with --api and verify the endpoint is http://127.0.0.1:7860.",
+        comfyuiNoCheckpoint: "ComfyUI responded, but no checkpoint is available. Install a model or make sure CheckpointLoaderSimple can see it.",
+        openaiKeyMissing: "OpenAI Images is not configured. Set OPENAI_API_KEY and allow online fallback if you want to use the cloud route.",
+        failureGenericFix: "Adjust the prompt, switch provider, or deploy a local generative image service and retry.",
+        interruptedFix: "This job was interrupted. Upload again or create a new job.",
         runnerInterrupted: "Runner interrupted",
         restartRequired: "Create or rerun this job",
         statusRunning: "Running",
@@ -1556,6 +1578,17 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         notCompleted: "未完了",
         noLiveJobFlow: "現在実行中のジョブはありません。画像または動画をアップロードするとライブ追跡が始まります。",
         rerunSuggestion: "プロンプトを調整するか、provider を切り替えるか、再アップロードしてください。",
+        failureTitle: "出力は生成されませんでした",
+        failureReason: "主な原因",
+        suggestedFix: "推奨対応",
+        technicalDetails: "技術詳細",
+        generativeRequiredTitle: "生成画像モデルが必要です",
+        generativeRequiredReason: "この指示は回転、明るさ、白黒のようなローカルフィルターではなく、Stable Diffusion、ComfyUI、OpenAI Images などの生成モデルが必要です。",
+        automatic1111Offline: "Automatic1111 に接続できません。WebUI を --api 付きで起動し、URL が http://127.0.0.1:7860 か確認してください。",
+        comfyuiNoCheckpoint: "ComfyUI は応答していますが checkpoint がありません。モデルをインストールし、CheckpointLoaderSimple から見えるか確認してください。",
+        openaiKeyMissing: "OpenAI Images が未設定です。クラウド fallback を使う場合は OPENAI_API_KEY を設定し、オンライン fallback を許可してください。",
+        failureGenericFix: "プロンプトを調整するか、provider を切り替えるか、ローカル生成画像サービスを用意して再試行してください。",
+        interruptedFix: "このジョブは中断されました。再アップロードするか新しいジョブを作成してください。",
         runnerInterrupted: "runner が中断されました",
         restartRequired: "ジョブを再作成または再実行してください",
         statusRunning: "実行中",
@@ -1987,6 +2020,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         title.title = "";
         meta.textContent = t("idleMeta");
         summary.classList.remove("hidden");
+        summary.className = "mb-4 rounded-xl border border-sky-300/20 bg-sky-300/[0.05] p-4";
         summary.innerHTML = `
           <div class="flex flex-wrap items-center justify-between gap-4">
             <div>
@@ -2011,6 +2045,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       const displayPhase = isHistory ? finalPhase(job) : activePhase(job);
       const nextPhase = isHistory ? null : nextWaitingPhase(job);
       const overall = overallProgress(job);
+      const historyWarning = isHistory ? historyWarningHtml(job, displayPhase) : "";
       title.textContent = isHistory ? t("historyTitle") : `${displayJobName(job.id)} · ${statusLabel(job.status)}`;
       title.title = job.id;
       meta.textContent = isHistory
@@ -2020,6 +2055,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       cancelButton.classList.toggle("hidden", !canCancel);
       cancelButton.disabled = job.status === "cancelling";
       summary.classList.remove("hidden");
+      summary.className = trackerSummaryClass(job.status, isHistory);
       summary.innerHTML = `
         <div class="grid gap-4 lg:grid-cols-[1fr_1fr_160px] lg:items-center">
           <div>
@@ -2039,6 +2075,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         <div class="mt-4 h-2 overflow-hidden rounded-full bg-black/40">
           <div class="relative h-full overflow-hidden rounded-full ${isHistory ? "bg-slate-500" : "bg-lime-300"} ${job.status === "running" ? "pipeline-flow" : ""}" style="width:${isHistory && job.status !== "completed" ? Math.max(8, overall) : overall}%"></div>
         </div>
+        ${historyWarning}
       `;
       target.innerHTML = job.phases.map((phase, index) => `
         <div class="relative rounded-xl border ${phaseTone[phase.status] || phaseTone.waiting} p-4 ${phase.status === "running" ? "pipeline-card-running" : ""}">
@@ -2078,6 +2115,52 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       if (job.status === "interrupted") return phases.find(phase => phase.status === "running") || phases.find(phase => phase.status === "waiting") || activePhase(job);
       if (job.status === "completed") return [...phases].reverse().find(phase => phase.status === "completed") || activePhase(job);
       return activePhase(job);
+    }
+
+    function trackerSummaryClass(status, isHistory) {
+      if (!isHistory) return "mb-4 rounded-xl border border-sky-300/20 bg-sky-300/[0.05] p-4";
+      if (status === "failed") return "mb-4 rounded-xl border border-red-300/45 bg-red-950/25 p-4 shadow-[0_0_36px_rgba(248,113,113,.12)]";
+      if (status === "interrupted" || status === "cancelled") return "mb-4 rounded-xl border border-orange-300/45 bg-orange-950/25 p-4 shadow-[0_0_32px_rgba(251,146,60,.10)]";
+      return "mb-4 rounded-xl border border-white/10 bg-white/[0.03] p-4";
+    }
+
+    function historyWarningHtml(job, phase) {
+      if (!["failed", "interrupted", "cancelled"].includes(job.status)) return "";
+      const message = job.errorMessage || (job.status === "interrupted" ? t("interruptedFix") : t("failureGenericFix"));
+      const info = parseFailureMessage(message);
+      const tone = job.status === "failed"
+        ? {
+            card: "border-red-300/35 bg-black/25",
+            icon: "bg-red-300/20 text-red-100",
+            title: "text-red-100",
+            arrow: "text-red-200"
+          }
+        : {
+            card: "border-orange-300/35 bg-black/25",
+            icon: "bg-orange-300/20 text-orange-100",
+            title: "text-orange-100",
+            arrow: "text-orange-200"
+          };
+      const icon = job.status === "failed" ? "circle-alert" : "circle-stop";
+      const title = job.status === "failed" ? info.title : statusLabel(job.status);
+      const reason = job.status === "failed" ? info.reason : currentSummary(job, phase);
+      const fixes = job.status === "failed" ? info.fixes : [t("interruptedFix"), t("rerunSuggestion")];
+      return `
+        <div class="mt-4 rounded-xl border ${tone.card} p-4">
+          <div class="flex items-start gap-3">
+            <span class="grid h-9 w-9 shrink-0 place-items-center rounded-lg ${tone.icon}">
+              <i data-lucide="${icon}" class="h-5 w-5"></i>
+            </span>
+            <div class="min-w-0">
+              <p class="text-sm font-black ${tone.title}">${escapeHtml(title)}</p>
+              <p class="mt-1 text-sm leading-6 text-slate-200">${escapeHtml(reason)}</p>
+            </div>
+          </div>
+          <div class="mt-3 grid gap-2">
+            ${fixes.map(item => `<div class="flex gap-2 text-sm leading-6 text-slate-300"><i data-lucide="arrow-right" class="mt-1 h-4 w-4 shrink-0 ${tone.arrow}"></i><span>${escapeHtml(item)}</span></div>`).join("")}
+          </div>
+        </div>
+      `;
     }
 
     function progressSummary(job) {
@@ -2498,7 +2581,11 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
             })
           });
           const payload = await response.json();
-          if (!response.ok) throw new Error(payload.message || "Media job failed");
+          if (!response.ok) {
+            const error = new Error(payload.message || "Media job failed");
+            error.payload = payload;
+            throw error;
+          }
           createdPayloads.push(payload);
           jobs = [payload.job, ...jobs];
           gallery = [...(payload.gallery || []), ...gallery].filter(isMediaGalleryItem);
@@ -2520,12 +2607,69 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         render();
         connectSseStream();
       } catch (error) {
-        hint.textContent = error.message;
+        showFailureHint(error.payload?.message || error.message);
         appendLogLine(`[error] ${error.message}`);
       } finally {
         submit.disabled = false;
       }
     });
+
+    function showFailureHint(message) {
+      const hint = document.getElementById("formHint");
+      hint.innerHTML = failureCardHtml(message);
+      lucide.createIcons();
+    }
+
+    function failureCardHtml(message) {
+      const info = parseFailureMessage(message);
+      const fixes = info.fixes.length ? info.fixes : [t("failureGenericFix")];
+      return `
+        <div class="rounded-xl border border-red-300/45 bg-red-950/35 p-4 text-left text-sm text-red-50 shadow-[0_0_32px_rgba(248,113,113,.12)]">
+          <div class="flex items-start gap-3">
+            <span class="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-red-300 text-red-950">
+              <i data-lucide="triangle-alert" class="h-5 w-5"></i>
+            </span>
+            <div class="min-w-0">
+              <p class="text-base font-black text-red-100">${escapeHtml(t("failureTitle"))}</p>
+              <p class="mt-1 text-sm font-black text-white">${escapeHtml(info.title)}</p>
+              <p class="mt-2 leading-6 text-red-100/85">${escapeHtml(info.reason)}</p>
+            </div>
+          </div>
+          <div class="mt-4 rounded-lg border border-red-200/15 bg-black/25 p-3">
+            <p class="mb-2 text-xs font-black uppercase tracking-wide text-red-200">${escapeHtml(t("suggestedFix"))}</p>
+            <ul class="grid gap-2 text-sm leading-6 text-slate-100">
+              ${fixes.map(item => `<li class="flex gap-2"><i data-lucide="arrow-right" class="mt-1 h-4 w-4 shrink-0 text-red-200"></i><span>${escapeHtml(item)}</span></li>`).join("")}
+            </ul>
+          </div>
+          <details class="mt-3 rounded-lg border border-white/10 bg-black/20 p-3 text-xs text-slate-300">
+            <summary class="cursor-pointer font-black text-slate-200">${escapeHtml(t("technicalDetails"))}</summary>
+            <p class="mt-2 whitespace-pre-wrap break-words font-mono leading-5">${escapeHtml(message || "")}</p>
+          </details>
+        </div>
+      `;
+    }
+
+    function parseFailureMessage(message) {
+      const text = String(message || "");
+      const fixes = [];
+      let title = t("failureTitle");
+      let reason = text || t("failureGenericFix");
+      if (text.includes("生成式圖片模型") || text.toLowerCase().includes("generative image")) {
+        title = t("generativeRequiredTitle");
+        reason = t("generativeRequiredReason");
+      }
+      if (text.includes("Automatic1111") || text.includes("WinError 10061") || text.toLowerCase().includes("actively refused")) {
+        fixes.push(t("automatic1111Offline"));
+      }
+      if (text.includes("ComfyUI") && (text.includes("checkpoint") || text.includes("CheckpointLoaderSimple"))) {
+        fixes.push(t("comfyuiNoCheckpoint"));
+      }
+      if (text.includes("OPENAI_API_KEY") || text.includes("OpenAI Images API unavailable")) {
+        fixes.push(t("openaiKeyMissing"));
+      }
+      if (!fixes.length) fixes.push(t("failureGenericFix"));
+      return { title, reason, fixes };
+    }
 
     function updateEditorMode(mediaType) {
       currentMediaType = mediaType;
@@ -3980,10 +4124,24 @@ def jobs_for_frontend(output_root: Path) -> list[dict]:
                 or manifest.get("input", {}).get("source_path", ""),
                 "outputDirectory": str(output_root),
                 "updatedAt": manifest.get("updated_at") or manifest.get("created_at") or "",
+                "errorMessage": frontend_error_message(manifest),
                 "phases": frontend_phases(manifest),
             }
         )
     return jobs
+
+
+def frontend_error_message(manifest: dict) -> str:
+    errors = manifest.get("errors")
+    if isinstance(errors, list):
+        for item in errors:
+            if isinstance(item, dict) and item.get("message"):
+                return str(item.get("message"))
+            if isinstance(item, str) and item:
+                return item
+    if manifest.get("error"):
+        return str(manifest.get("error"))
+    return ""
 
 
 def frontend_phases(manifest: dict) -> list[dict]:
