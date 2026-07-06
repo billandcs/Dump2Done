@@ -766,24 +766,29 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
             </div>
           </div>
           <div id="videoOptions" class="hidden grid gap-3 rounded-xl border border-sky-300/15 bg-sky-300/[0.04] p-3">
-            <label class="grid gap-2">
-              <span class="text-sm font-bold text-slate-300" data-i18n="videoProfile">影片 Profile</span>
-              <select name="profile" class="h-11 rounded-lg border border-white/10 bg-black/40 px-3 text-sm text-slate-100 outline-none focus:border-sky-300/70">
-                <option value="configs/default.yaml">default.yaml</option>
-                <option value="configs/qualcomm_windows_arm64.yaml" selected>qualcomm_windows_arm64.yaml</option>
-              </select>
-            </label>
-            <div class="grid grid-cols-2 gap-3">
-              <select name="modelVersion" class="h-11 rounded-lg border border-white/10 bg-black/40 px-3 text-sm text-slate-100 outline-none focus:border-sky-300/70">
-                <option value="local-v1">Local V1</option>
-                <option value="v2-placeholder">V2.0</option>
-              </select>
+            <input type="hidden" name="profile" value="configs/qualcomm_windows_arm64.yaml">
+            <div class="rounded-lg border border-white/10 bg-black/25 p-3">
+              <span class="flex items-center gap-2 text-sm font-bold text-slate-300">
+                <span data-i18n="videoRuntimeProfile">影片本地設定</span>
+                <button class="field-help grid h-5 w-5 place-items-center rounded-full border border-sky-300/35 bg-sky-300/10 text-[11px] font-black text-sky-100 hover:bg-sky-300/20" type="button" data-help-key="videoRuntimeProfileHelp">?</button>
+              </span>
+              <p class="mt-2 text-xs leading-5 text-slate-500" data-i18n="videoRuntimeProfileSummary">目前自動使用 Qualcomm 本地安全設定；等 profile 真的影響 runner 後才會開放選單。</p>
+            </div>
+            <div class="grid gap-3">
+              <input type="hidden" name="modelVersion" value="local-v1">
+              <label class="grid gap-2">
+                <span class="flex items-center gap-2 text-sm font-bold text-slate-300">
+                  <span data-i18n="videoResolution">輸出解析度</span>
+                  <button class="field-help grid h-5 w-5 place-items-center rounded-full border border-sky-300/35 bg-sky-300/10 text-[11px] font-black text-sky-100 hover:bg-sky-300/20" type="button" data-help-key="videoResolutionHelp">?</button>
+                </span>
               <select name="resolution" class="h-11 rounded-lg border border-white/10 bg-black/40 px-3 text-sm text-slate-100 outline-none focus:border-sky-300/70">
                 <option value="original">Original</option>
                 <option value="720p">720P</option>
                 <option value="1080p">1080P</option>
               </select>
+              </label>
             </div>
+            <p id="videoOptionHelp" class="rounded-lg border border-white/10 bg-black/25 p-3 text-xs leading-5 text-slate-400" data-i18n="videoOptionHelpDefault">這些是目前會送到後端的影片設定；沒有實際功能的模型版本選單已先隱藏。</p>
           </div>
           <div id="mediaResult" class="hidden min-w-0 overflow-hidden rounded-xl border border-sky-300/20 bg-sky-300/[0.05] p-3 text-xs text-slate-300">
             <div class="grid min-w-0 gap-3">
@@ -1008,6 +1013,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
     let uploadPreviewUrl = null;
     let pendingDeleteId = "";
     let activeComputeHelpKey = "";
+    let activeVideoOptionHelpKey = "";
     const logLines = [
       "[dashboard] Booted Dump2Done local control plane on http://127.0.0.1:8765/",
       "[runner] Qualcomm profile loaded: CPU int8, single worker, ffmpeg libx264",
@@ -1091,6 +1097,13 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         videoWorkflowTitle: "影片工作流",
         videoWorkflowHelp: "影片會啟動本地 video runner，先做 FFmpeg 分析、逐幀處理與 MP4 輸出。較複雜的生成式改衣服未來會接 segmentation/tracking 或線上 fallback。",
         videoProfile: "影片 Profile",
+        videoRuntimeProfile: "影片本地設定",
+        videoRuntimeProfileSummary: "目前自動使用 Qualcomm 本地安全設定；等 profile 真的影響 runner 後才會開放選單。",
+        videoResolution: "輸出解析度",
+        videoOptionHelpDefault: "這裡只保留目前會影響輸出的影片設定；尚未改變 runner 行為的控制項已先隱藏。",
+        videoProfileHelp: "Profile 會決定後端採用哪份執行設定。目前 Qualcomm 裝置預設使用 qualcomm_windows_arm64.yaml，代表先走 CPU / FFmpeg 的穩定本地路線，避免假設 CUDA 或 NVENC。",
+        videoRuntimeProfileHelp: "這不是可切換功能，而是目前後端固定採用的安全執行路線。因為你的機器是 Qualcomm 平台，系統先使用 qualcomm_windows_arm64.yaml 來避免 CUDA/NVENC 假設；等 profile 真的會改變模型、加速器或 runner 策略後，才會開放下拉選單。",
+        videoResolutionHelp: "輸出解析度會影響 runner 抽幀與輸出尺寸。Original 盡量保留原始尺寸；720P / 1080P 會在處理前縮放，速度較快、檔案較小，也比較適合目前本地 MVP。",
         autoDetect: "Auto Detect",
         imageEdit: "Image Edit",
         videoPipeline: "Video Pipeline",
@@ -1203,6 +1216,13 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         videoWorkflowTitle: "Video Workflow",
         videoWorkflowHelp: "Videos start the local video runner: FFmpeg analysis, frame processing, and MP4 output. Higher-quality generative clothing edits will later use segmentation/tracking or online fallback.",
         videoProfile: "Video Profile",
+        videoRuntimeProfile: "Local Video Runtime",
+        videoRuntimeProfileSummary: "Currently auto-uses the Qualcomm-safe local profile. The selector stays hidden until profiles change real runner behavior.",
+        videoResolution: "Output Resolution",
+        videoOptionHelpDefault: "Only video settings that affect output remain visible. Controls that do not change runner behavior are hidden for now.",
+        videoProfileHelp: "Profile selects the backend execution config. On this Qualcomm device, qualcomm_windows_arm64.yaml means a stable local CPU / FFmpeg route without assuming CUDA or NVENC.",
+        videoRuntimeProfileHelp: "This is not a user-switchable feature yet. The backend currently locks to the Qualcomm-safe route, qualcomm_windows_arm64.yaml, to avoid CUDA/NVENC assumptions. The dropdown should return only after profiles change models, accelerators, or runner strategy.",
+        videoResolutionHelp: "Output resolution affects frame extraction and render size. Original keeps source dimensions where possible; 720P / 1080P scale before processing for faster local MVP runs and smaller files.",
         autoDetect: "Auto Detect",
         imageEdit: "Image Edit",
         videoPipeline: "Video Pipeline",
@@ -1315,6 +1335,13 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         videoWorkflowTitle: "動画ワークフロー",
         videoWorkflowHelp: "動画は local video runner で FFmpeg 解析、フレーム処理、MP4 出力を行います。高品質な生成式衣服編集は将来 segmentation/tracking または online fallback に接続します。",
         videoProfile: "動画 Profile",
+        videoRuntimeProfile: "ローカル動画設定",
+        videoRuntimeProfileSummary: "現在は Qualcomm 向け安全 profile を自動使用します。実際に runner 挙動が変わるまで選択肢は隠します。",
+        videoResolution: "出力解像度",
+        videoOptionHelpDefault: "現在は出力に影響する動画設定だけを表示します。runner 挙動を変えない項目は非表示にしています。",
+        videoProfileHelp: "Profile はバックエンドの実行設定を選びます。この Qualcomm 端末では qualcomm_windows_arm64.yaml が既定で、CUDA や NVENC を前提にしない安定した CPU / FFmpeg ローカル経路です。",
+        videoRuntimeProfileHelp: "これはまだ切り替え機能ではありません。現在のバックエンドは Qualcomm 安全ルート qualcomm_windows_arm64.yaml に固定し、CUDA/NVENC 前提を避けます。Profile がモデル、加速器、runner 戦略を実際に変える段階で選択肢を戻します。",
+        videoResolutionHelp: "出力解像度はフレーム抽出とレンダーサイズに影響します。Original は可能な限り元サイズを保持し、720P / 1080P は処理前に縮小してローカル MVP を速く、小さくします。",
         autoDetect: "自動判定",
         imageEdit: "画像編集",
         videoPipeline: "動画 Pipeline",
@@ -1445,8 +1472,16 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         button.title = helpText;
         button.setAttribute("aria-label", `${t("helpButtonLabel")}: ${helpText}`);
       });
+      document.querySelectorAll(".field-help").forEach(button => {
+        const helpText = t(button.dataset.helpKey);
+        button.title = helpText;
+        button.setAttribute("aria-label", `${t("helpButtonLabel")}: ${helpText}`);
+      });
       if (activeComputeHelpKey) {
         showComputeHelp(activeComputeHelpKey);
+      }
+      if (activeVideoOptionHelpKey) {
+        showVideoOptionHelp(activeVideoOptionHelpKey);
       }
     }
 
@@ -1459,6 +1494,21 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       panel.classList.remove("border-white/10", "bg-black/30");
       panel.classList.add("border-lime-300/30", "bg-lime-300/[0.06]");
       document.querySelectorAll(".compute-help").forEach(button => {
+        const active = button.dataset.helpKey === helpKey;
+        button.classList.toggle("border-lime-300/60", active);
+        button.classList.toggle("bg-lime-300/20", active);
+        button.classList.toggle("text-lime-100", active);
+      });
+    }
+
+    function showVideoOptionHelp(helpKey) {
+      activeVideoOptionHelpKey = helpKey;
+      const text = document.getElementById("videoOptionHelp");
+      if (!text) return;
+      text.textContent = t(helpKey);
+      text.classList.remove("border-white/10", "bg-black/25");
+      text.classList.add("border-sky-300/30", "bg-sky-300/[0.06]");
+      document.querySelectorAll(".field-help").forEach(button => {
         const active = button.dataset.helpKey === helpKey;
         button.classList.toggle("border-lime-300/60", active);
         button.classList.toggle("bg-lime-300/20", active);
@@ -1763,6 +1813,13 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       event.preventDefault();
       event.stopPropagation();
       resetMediaSelection(true);
+    });
+    document.getElementById("mediaForm").addEventListener("click", event => {
+      const helpButton = event.target.closest(".field-help");
+      if (!helpButton) return;
+      event.preventDefault();
+      event.stopPropagation();
+      showVideoOptionHelp(helpButton.dataset.helpKey);
     });
     dropZone.addEventListener("dragover", event => {
       event.preventDefault();
