@@ -36,6 +36,13 @@ PIPELINE_EVENT_QUEUE: queue.Queue[dict] = queue.Queue()
 LOG_WRITE_LOCK = threading.Lock()
 DEFAULT_OUTPUT_ROOT = Path("output/jobs")
 CONSOLE_LOG_PATH = Path("output/logs/dashboard_console.ndjson")
+DASHBOARD_SETTINGS_PATH = Path("output/dashboard_settings.json")
+DASHBOARD_DEFAULT_SETTINGS = {
+    "defaultOutputDirectory": "output\\exports\\images",
+    "autoPreviewOutput": False,
+    "autoOpenOutputFolder": False,
+    "galleryDensity": "comfortable",
+}
 
 TOOLTIPS = {
     "Qualcomm Q1": "這代表目前這台機器是 Qualcomm 平台，適合先用 CPU int8 跑本地 MVP，未來再評估 QNN/DirectML 加速。Q1 不是效能分數滿分，而是「可開發、待加速優化」。",
@@ -84,6 +91,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     "gallery": gallery_for_frontend(self.output_root),
                 }
             )
+            return
+        if parsed.path == "/api/settings":
+            self._send_json({"status": "ok", "settings": load_dashboard_settings(self.output_root)})
             return
         if parsed.path == "/artifact":
             query = parse_qs(parsed.query)
@@ -141,6 +151,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
             try:
                 payload = self._read_json_body()
                 response = open_folder_request(self.output_root, payload)
+                self._send_json(response)
+            except ValueError as exc:
+                self._send_json({"status": "error", "message": str(exc)}, status=400)
+            except Exception as exc:
+                self._send_json({"status": "error", "message": str(exc)}, status=500)
+            return
+        if parsed.path == "/api/settings":
+            try:
+                payload = self._read_json_body()
+                response = save_dashboard_settings(self.output_root, payload)
                 self._send_json(response)
             except ValueError as exc:
                 self._send_json({"status": "error", "message": str(exc)}, status=400)
@@ -728,6 +748,9 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
               <option value="compact" data-i18n="densityCompact">緊湊</option>
             </select>
           </label>
+          <button id="openDefaultOutputFolder" class="rounded-lg border border-sky-300/30 px-4 py-3 text-sm font-black text-sky-100 hover:bg-sky-300/10" type="button">
+            <i data-lucide="folder-open" class="mr-1 inline h-4 w-4"></i><span data-i18n="openDefaultOutputFolder">開啟預設資料夾</span>
+          </button>
           <div class="grid grid-cols-2 gap-3 pt-2">
             <button id="resetSettings" class="rounded-lg border border-white/10 px-4 py-3 text-sm font-black text-slate-300 hover:border-orange-300/50 hover:text-orange-200" type="button" data-i18n="resetSettings">重設</button>
             <button class="rounded-lg bg-lime-300 px-4 py-3 text-sm font-black text-slate-950 hover:bg-lime-200" type="submit" data-i18n="saveSettings">儲存設定</button>
@@ -832,6 +855,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         densityCompact: "緊湊",
         resetSettings: "重設",
         saveSettings: "儲存設定",
+        openDefaultOutputFolder: "開啟預設資料夾",
         settingsSaved: "設定已儲存。",
         settingsReset: "設定已重設。",
         settingsButtonLabel: "偏好設定"
@@ -906,6 +930,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         densityCompact: "Compact",
         resetSettings: "Reset",
         saveSettings: "Save Settings",
+        openDefaultOutputFolder: "Open Default Folder",
         settingsSaved: "Settings saved.",
         settingsReset: "Settings reset.",
         settingsButtonLabel: "Preferences"
@@ -980,6 +1005,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         densityCompact: "コンパクト",
         resetSettings: "リセット",
         saveSettings: "設定を保存",
+        openDefaultOutputFolder: "既定フォルダーを開く",
         settingsSaved: "設定を保存しました。",
         settingsReset: "設定をリセットしました。",
         settingsButtonLabel: "設定"
@@ -1007,8 +1033,36 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       }
     }
 
-    function saveSettings() {
+    function saveSettingsLocal() {
       localStorage.setItem("dump2done.settings", JSON.stringify(userSettings));
+    }
+
+    async function loadSettingsFromServer() {
+      try {
+        const response = await fetch("/api/settings");
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.message || "Settings load failed");
+        userSettings = { ...DEFAULT_SETTINGS, ...(payload.settings || {}) };
+        saveSettingsLocal();
+        applySettingsToUi();
+        renderGallery();
+        lucide.createIcons();
+      } catch (error) {
+        appendLogLine(`[settings] ${error.message}`);
+      }
+    }
+
+    async function saveSettingsToServer() {
+      const response = await fetch("/api/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ settings: userSettings })
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.message || "Settings save failed");
+      userSettings = { ...DEFAULT_SETTINGS, ...(payload.settings || {}) };
+      saveSettingsLocal();
+      return payload;
     }
 
     function applyLanguage() {
@@ -1218,7 +1272,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
     document.getElementById("settingsModal").addEventListener("click", event => {
       if (event.target.id === "settingsModal") closeSettingsModal();
     });
-    document.getElementById("settingsForm").addEventListener("submit", event => {
+    document.getElementById("settingsForm").addEventListener("submit", async event => {
       event.preventDefault();
       userSettings = {
         defaultOutputDirectory: document.getElementById("defaultOutputDirectory").value.trim() || DEFAULT_SETTINGS.defaultOutputDirectory,
@@ -1226,21 +1280,35 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         autoOpenOutputFolder: document.getElementById("autoOpenOutputFolder").checked,
         galleryDensity: document.getElementById("galleryDensity").value || DEFAULT_SETTINGS.galleryDensity
       };
-      saveSettings();
-      applySettingsToUi();
-      const imageOutput = document.querySelector('input[name="imageOutputDirectory"]');
-      if (imageOutput) imageOutput.value = userSettings.defaultOutputDirectory;
-      renderGallery();
-      lucide.createIcons();
-      document.getElementById("settingsHint").textContent = t("settingsSaved");
+      try {
+        await saveSettingsToServer();
+        applySettingsToUi();
+        const imageOutput = document.querySelector('input[name="imageOutputDirectory"]');
+        if (imageOutput) imageOutput.value = userSettings.defaultOutputDirectory;
+        renderGallery();
+        lucide.createIcons();
+        document.getElementById("settingsHint").textContent = t("settingsSaved");
+      } catch (error) {
+        document.getElementById("settingsHint").textContent = error.message;
+        appendLogLine(`[settings] ${error.message}`);
+      }
     });
-    document.getElementById("resetSettings").addEventListener("click", () => {
+    document.getElementById("openDefaultOutputFolder").addEventListener("click", () => {
+      const folder = document.getElementById("defaultOutputDirectory").value.trim() || userSettings.defaultOutputDirectory;
+      openFolder(folder, "default output");
+    });
+    document.getElementById("resetSettings").addEventListener("click", async () => {
       userSettings = { ...DEFAULT_SETTINGS };
-      saveSettings();
-      applySettingsToUi();
-      renderGallery();
-      lucide.createIcons();
-      document.getElementById("settingsHint").textContent = t("settingsReset");
+      try {
+        await saveSettingsToServer();
+        applySettingsToUi();
+        renderGallery();
+        lucide.createIcons();
+        document.getElementById("settingsHint").textContent = t("settingsReset");
+      } catch (error) {
+        document.getElementById("settingsHint").textContent = error.message;
+        appendLogLine(`[settings] ${error.message}`);
+      }
     });
     const mediaFileInput = document.getElementById("mediaFile");
     const dropZone = document.getElementById("dropZone");
@@ -1730,6 +1798,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
     }
 
     render();
+    loadSettingsFromServer();
     connectSseStream();
   </script>
 </body>
@@ -3083,6 +3152,36 @@ def edit_image_locally(input_path: Path, renders_dir: Path, prompt: str, resolut
 def write_json_file(path: Path, payload: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def load_dashboard_settings(output_root: Path) -> dict:
+    stored = read_json_or_none(DASHBOARD_SETTINGS_PATH) or {}
+    settings = {**DASHBOARD_DEFAULT_SETTINGS, **stored}
+    try:
+        output_dir = resolve_media_export_directory(output_root, str(settings["defaultOutputDirectory"]))
+        settings["defaultOutputDirectory"] = str(output_dir)
+    except ValueError:
+        settings["defaultOutputDirectory"] = DASHBOARD_DEFAULT_SETTINGS["defaultOutputDirectory"]
+    settings["autoPreviewOutput"] = bool(settings.get("autoPreviewOutput"))
+    settings["autoOpenOutputFolder"] = bool(settings.get("autoOpenOutputFolder"))
+    if settings.get("galleryDensity") not in {"comfortable", "compact"}:
+        settings["galleryDensity"] = "comfortable"
+    return settings
+
+
+def save_dashboard_settings(output_root: Path, payload: dict) -> dict:
+    settings = {**DASHBOARD_DEFAULT_SETTINGS}
+    if "settings" in payload and isinstance(payload["settings"], dict):
+        payload = payload["settings"]
+    requested_output = str(payload.get("defaultOutputDirectory") or settings["defaultOutputDirectory"]).strip()
+    output_dir = resolve_media_export_directory(output_root, requested_output)
+    settings["defaultOutputDirectory"] = str(output_dir)
+    settings["autoPreviewOutput"] = bool(payload.get("autoPreviewOutput"))
+    settings["autoOpenOutputFolder"] = bool(payload.get("autoOpenOutputFolder"))
+    density = str(payload.get("galleryDensity") or "comfortable")
+    settings["galleryDensity"] = density if density in {"comfortable", "compact"} else "comfortable"
+    write_json_file(DASHBOARD_SETTINGS_PATH, settings)
+    return {"status": "ok", "settings": settings, "path": str(DASHBOARD_SETTINGS_PATH)}
 
 
 def image_resolution(path: Path) -> str:
