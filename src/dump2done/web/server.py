@@ -706,28 +706,11 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
           <span id="mediaTypePill" class="rounded-lg border border-lime-300/30 bg-lime-300/10 px-3 py-1 text-xs font-black text-lime-200">Auto Detect</span>
         </div>
         <form id="mediaForm" class="grid min-w-0 gap-4">
-          <label id="dropZone" class="grid min-h-44 cursor-pointer place-items-center overflow-hidden rounded-xl border border-dashed border-white/15 bg-black/25 p-4 text-center hover:border-sky-300/50">
-            <input id="mediaFile" name="mediaFile" type="file" accept="image/*,video/*" class="hidden" required>
-            <span id="mediaEmptyState" class="grid gap-2">
-              <i data-lucide="upload-cloud" class="mx-auto h-8 w-8 text-sky-300"></i>
-              <strong class="text-sm" data-i18n="uploadMediaPrompt">上傳想要編輯的圖片或影片</strong>
-              <span class="text-xs text-slate-500" data-i18n="autoDetectHint">系統會自動判斷 image / video</span>
-            </span>
-            <span id="mediaPreviewState" class="hidden grid w-full min-w-0 gap-3">
-              <span class="relative overflow-hidden rounded-lg border border-white/10 bg-black/40">
-                <img id="uploadImagePreview" class="hidden h-44 w-full object-contain" alt="Selected image preview">
-                <video id="uploadVideoPreview" class="hidden h-44 w-full object-contain" muted playsinline controls></video>
-                <span class="absolute left-2 top-2 rounded-md bg-black/70 px-2 py-1 text-[11px] font-black text-lime-200">Preview</span>
-                <button id="clearMediaSelection" class="absolute right-2 top-2 inline-flex items-center gap-1 rounded-md border border-red-300/35 bg-black/75 px-2 py-1 text-[11px] font-black text-red-100 hover:bg-red-300/15" type="button">
-                  <i data-lucide="x" class="h-3 w-3"></i><span data-i18n="clearMediaSelection">移除</span>
-                </button>
-              </span>
-              <span class="grid gap-1">
-                <strong id="mediaFileName" class="truncate text-sm">上傳想要編輯的圖片或影片</strong>
-                <span id="mediaFileHint" class="text-xs text-slate-500">系統會自動判斷 image / video</span>
-              </span>
-            </span>
-          </label>
+          <div id="dropZone" class="block min-h-44 overflow-hidden rounded-xl border border-dashed border-white/15 bg-black/25 p-4 text-center hover:border-sky-300/50">
+            <input id="mediaFile" name="mediaFile" type="file" accept="image/*,video/*" class="hidden" multiple>
+            <span class="mb-3 block text-left text-xs font-bold text-slate-500" data-i18n="multiMediaHint">可多次追加素材；未來會支援多段影像一起拼接處理。</span>
+            <span id="mediaAssetGrid" class="grid w-full min-w-0 grid-cols-2 gap-3"></span>
+          </div>
           <label class="grid gap-2">
             <span class="text-sm font-bold text-slate-300" data-i18n="editPrompt">編輯描述</span>
             <textarea id="mediaPrompt" name="prompt" rows="7" class="resize-none rounded-lg border border-white/10 bg-black/30 px-3 py-3 text-sm leading-6 text-slate-100 outline-none focus:border-sky-300/70" placeholder="先描述你想完成的結果。選擇圖片會進入圖片編輯；選擇影片會啟動影片 runner。" data-i18n-placeholder="genericPromptPlaceholder"></textarea>
@@ -1010,7 +993,8 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
     let gallery = [...INITIAL_GALLERY].filter(isMediaGalleryItem);
     let activeJobId = SELECTED_JOB_ID || (jobs[0] && jobs[0].id);
     let eventSource = null;
-    let uploadPreviewUrl = null;
+    let selectedMediaItems = [];
+    let mediaItemSerial = 0;
     let pendingDeleteId = "";
     let activeComputeHelpKey = "";
     let activeVideoOptionHelpKey = "";
@@ -1037,6 +1021,9 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         uploadMedia: "上傳圖片或影片",
         uploadMediaPrompt: "上傳想要編輯的圖片或影片",
         autoDetectHint: "系統會自動判斷 image / video",
+        multiMediaHint: "可多次追加素材；未來會支援多段影像一起拼接處理。",
+        addAnotherMedia: "新增素材",
+        mixedMedia: "多素材",
         clearMediaSelection: "移除",
         mediaSelectionCleared: "已移除選擇的檔案，可重新上傳。",
         editPrompt: "編輯描述",
@@ -1086,6 +1073,9 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         deletePrompt: "確定移除這個產出物？檔案會移到 output/trash。",
         deleteMoved: "已移到 output/trash。",
         noFile: "請先選擇圖片或影片。",
+        unsupportedMediaType: "目前這個編輯器只支援圖片與影片素材。",
+        mediaLimitReached: "最多可先放 12 個素材，超過的檔案已略過。",
+        batchCreated: "已建立批次任務數：",
         readingFile: "讀取檔案中...",
         processing: "上傳並處理中...",
         imageReadyHint: "圖片會立即以本地 Pillow 編輯並匯出到指定資料夾。",
@@ -1156,6 +1146,9 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         uploadMedia: "Upload Image or Video",
         uploadMediaPrompt: "Upload an image or video to edit",
         autoDetectHint: "The system will detect image / video automatically",
+        multiMediaHint: "You can add assets multiple times. Future versions will stitch multiple clips into one output.",
+        addAnotherMedia: "Add Media",
+        mixedMedia: "Multi Media",
         clearMediaSelection: "Remove",
         mediaSelectionCleared: "Removed the selected file. You can upload another one.",
         editPrompt: "Edit prompt",
@@ -1205,6 +1198,9 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         deletePrompt: "Remove this output? The file will be moved to output/trash.",
         deleteMoved: "Moved to output/trash.",
         noFile: "Choose an image or video first.",
+        unsupportedMediaType: "This editor currently supports image and video assets only.",
+        mediaLimitReached: "Up to 12 assets can be staged for now. Extra files were skipped.",
+        batchCreated: "Batch jobs created:",
         readingFile: "Reading file...",
         processing: "Uploading and processing...",
         imageReadyHint: "Images are edited locally with Pillow and exported to the selected folder.",
@@ -1275,6 +1271,9 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         uploadMedia: "画像または動画をアップロード",
         uploadMediaPrompt: "編集したい画像または動画をアップロード",
         autoDetectHint: "画像 / 動画を自動判定します",
+        multiMediaHint: "素材は何度でも追加できます。将来は複数クリップを1本に結合します。",
+        addAnotherMedia: "素材を追加",
+        mixedMedia: "複数素材",
         clearMediaSelection: "削除",
         mediaSelectionCleared: "選択したファイルを削除しました。別のファイルをアップロードできます。",
         editPrompt: "編集プロンプト",
@@ -1324,6 +1323,9 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         deletePrompt: "この出力を削除しますか？ファイルは output/trash に移動します。",
         deleteMoved: "output/trash に移動しました。",
         noFile: "先に画像または動画を選択してください。",
+        unsupportedMediaType: "現在このエディターは画像と動画のみ対応しています。",
+        mediaLimitReached: "現在は最大12個まで素材を追加できます。超過分はスキップしました。",
+        batchCreated: "作成したバッチジョブ数:",
         readingFile: "ファイルを読み込み中...",
         processing: "アップロードして処理中...",
         imageReadyHint: "画像は Pillow でローカル編集され、指定フォルダーへ出力されます。",
@@ -1735,6 +1737,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       currentLocale = event.target.value || "zh-Hant";
       localStorage.setItem("dump2done.locale", currentLocale);
       render();
+      renderSelectedMedia();
       updateEditorMode(currentMediaType);
     });
     document.getElementById("settingsButton").addEventListener("click", openSettingsModal);
@@ -1797,7 +1800,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
     const mediaResultPath = document.getElementById("mediaResultPath");
     const mediaResultLink = document.getElementById("mediaResultLink");
     const openMediaResultFolder = document.getElementById("openMediaResultFolder");
-    const clearMediaSelectionButton = document.getElementById("clearMediaSelection");
+    const mediaAssetGrid = document.getElementById("mediaAssetGrid");
     let currentMediaType = "unknown";
     let lastMediaOutputFolder = "";
     document.querySelectorAll(".prompt-chip").forEach(button => {
@@ -1809,12 +1812,20 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
     openMediaResultFolder.addEventListener("click", () => {
       if (lastMediaOutputFolder) openFolder(lastMediaOutputFolder, "media output");
     });
-    clearMediaSelectionButton.addEventListener("click", event => {
-      event.preventDefault();
-      event.stopPropagation();
-      resetMediaSelection(true);
-    });
     document.getElementById("mediaForm").addEventListener("click", event => {
+      const addMediaButton = event.target.closest("[data-add-media]");
+      if (addMediaButton) {
+        event.preventDefault();
+        mediaFileInput.click();
+        return;
+      }
+      const removeMediaButton = event.target.closest("[data-remove-media-id]");
+      if (removeMediaButton) {
+        event.preventDefault();
+        event.stopPropagation();
+        removeSelectedMedia(removeMediaButton.dataset.removeMediaId);
+        return;
+      }
       const helpButton = event.target.closest(".field-help");
       if (!helpButton) return;
       event.preventDefault();
@@ -1831,70 +1842,104 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
     dropZone.addEventListener("drop", event => {
       event.preventDefault();
       dropZone.classList.remove("border-sky-300/70", "bg-sky-300/10");
-      const file = event.dataTransfer && event.dataTransfer.files && event.dataTransfer.files[0];
-      if (!file) return;
-      const transfer = new DataTransfer();
-      transfer.items.add(file);
-      mediaFileInput.files = transfer.files;
-      mediaFileInput.dispatchEvent(new Event("change"));
+      const files = event.dataTransfer && event.dataTransfer.files ? Array.from(event.dataTransfer.files) : [];
+      addSelectedMedia(files);
     });
     mediaFileInput.addEventListener("change", () => {
-      const file = mediaFileInput.files && mediaFileInput.files[0];
-      const pill = document.getElementById("mediaTypePill");
-      const name = document.getElementById("mediaFileName");
-      const hint = document.getElementById("mediaFileHint");
-      const emptyState = document.getElementById("mediaEmptyState");
-      const previewState = document.getElementById("mediaPreviewState");
-      const imagePreview = document.getElementById("uploadImagePreview");
-      const videoPreview = document.getElementById("uploadVideoPreview");
-      clearUploadPreview();
+      const files = mediaFileInput.files ? Array.from(mediaFileInput.files) : [];
+      addSelectedMedia(files);
+      mediaFileInput.value = "";
+    });
+
+    function addSelectedMedia(files) {
+      const accepted = files.filter(file => ["image", "video"].includes(detectClientMediaType(file)));
+      const remainingSlots = Math.max(0, 12 - selectedMediaItems.length);
+      accepted.slice(0, remainingSlots).forEach(file => {
+        selectedMediaItems.push({
+          id: `media_${Date.now()}_${mediaItemSerial++}`,
+          file,
+          type: detectClientMediaType(file),
+          previewUrl: URL.createObjectURL(file)
+        });
+      });
       hideMediaResult();
-      if (!file) {
+      renderSelectedMedia();
+      if (files.length && !accepted.length) {
+        document.getElementById("formHint").textContent = t("unsupportedMediaType");
+      } else if (accepted.length > remainingSlots) {
+        document.getElementById("formHint").textContent = t("mediaLimitReached");
+      }
+    }
+
+    function removeSelectedMedia(id) {
+      const removed = selectedMediaItems.find(item => item.id === id);
+      if (removed) URL.revokeObjectURL(removed.previewUrl);
+      selectedMediaItems = selectedMediaItems.filter(item => item.id !== id);
+      renderSelectedMedia();
+      document.getElementById("formHint").textContent = t("mediaSelectionCleared");
+    }
+
+    function renderSelectedMedia() {
+      const pill = document.getElementById("mediaTypePill");
+      const typeSet = new Set(selectedMediaItems.map(item => item.type));
+      if (!selectedMediaItems.length) {
         pill.textContent = t("autoDetect");
-        name.textContent = t("uploadMediaPrompt");
-        hint.textContent = t("autoDetectHint");
-        emptyState.classList.remove("hidden");
-        previewState.classList.add("hidden");
         updateEditorMode("unknown");
+        mediaAssetGrid.innerHTML = mediaAddSlotHtml(true);
+        lucide.createIcons();
         return;
       }
-      const detected = detectClientMediaType(file);
-      updateEditorMode(detected);
-      pill.textContent = detected === "image" ? t("imageEdit") : detected === "video" ? t("videoPipeline") : t("unknown");
-      name.textContent = file.name;
-      hint.textContent = `${file.type || "unknown"} · ${formatBytes(file.size)}`;
-      uploadPreviewUrl = URL.createObjectURL(file);
-      emptyState.classList.add("hidden");
-      previewState.classList.remove("hidden");
-      imagePreview.classList.add("hidden");
-      videoPreview.classList.add("hidden");
-      if (detected === "image") {
-        imagePreview.src = uploadPreviewUrl;
-        imagePreview.classList.remove("hidden");
-      } else if (detected === "video") {
-        videoPreview.src = uploadPreviewUrl;
-        videoPreview.classList.remove("hidden");
-      }
-    });
+      const mode = typeSet.has("video") ? "video" : "image";
+      updateEditorMode(mode);
+      pill.textContent = typeSet.size > 1 ? t("mixedMedia") : mode === "image" ? t("imageEdit") : t("videoPipeline");
+      const cards = selectedMediaItems.map(item => mediaAssetCardHtml(item)).join("");
+      mediaAssetGrid.innerHTML = `${cards}${selectedMediaItems.length < 12 ? mediaAddSlotHtml(false) : ""}`;
+      lucide.createIcons();
+    }
+
+    function mediaAddSlotHtml(isEmpty) {
+      const extraClass = isEmpty ? "col-span-2 min-h-40" : "min-h-36";
+      return `
+        <button class="${extraClass} grid place-items-center rounded-lg border border-dashed border-sky-300/25 bg-white/[0.03] p-4 text-center text-slate-400 hover:border-sky-300/70 hover:bg-sky-300/10 hover:text-sky-100" type="button" data-add-media>
+          <span class="grid gap-2">
+            <i data-lucide="plus" class="mx-auto h-9 w-9"></i>
+            <strong class="text-sm">${escapeHtml(isEmpty ? t("uploadMediaPrompt") : t("addAnotherMedia"))}</strong>
+            <span class="text-xs text-slate-500">${escapeHtml(t("autoDetectHint"))}</span>
+          </span>
+        </button>
+      `;
+    }
+
+    function mediaAssetCardHtml(item) {
+      const preview = item.type === "image"
+        ? `<img class="h-32 w-full object-cover" src="${escapeAttr(item.previewUrl)}" alt="${escapeAttr(item.file.name)}">`
+        : `<video class="h-32 w-full object-cover" src="${escapeAttr(item.previewUrl)}" muted playsinline controls></video>`;
+      const typeLabel = item.type === "image" ? t("imageLabel") : t("videoLabel");
+      return `
+        <span class="grid min-w-0 gap-2 rounded-lg border border-white/10 bg-black/35 p-2 text-left">
+          <span class="relative overflow-hidden rounded-md bg-black">
+            ${preview}
+            <span class="absolute left-2 top-2 rounded-md bg-black/70 px-2 py-1 text-[11px] font-black text-lime-200">${escapeHtml(typeLabel)}</span>
+            <button class="absolute right-2 top-2 inline-flex items-center gap-1 rounded-md border border-red-300/35 bg-black/75 px-2 py-1 text-[11px] font-black text-red-100 hover:bg-red-300/15" type="button" data-remove-media-id="${escapeAttr(item.id)}">
+              <i data-lucide="x" class="h-3 w-3"></i>${escapeHtml(t("clearMediaSelection"))}
+            </button>
+          </span>
+          <span class="grid min-w-0 gap-1">
+            <strong class="truncate text-sm text-slate-100">${escapeHtml(item.file.name)}</strong>
+            <span class="truncate text-xs text-slate-500">${escapeHtml(item.file.type || "unknown")} · ${escapeHtml(formatBytes(item.file.size))}</span>
+          </span>
+        </span>
+      `;
+    }
 
     function resetMediaSelection(showHint) {
       const pill = document.getElementById("mediaTypePill");
-      const name = document.getElementById("mediaFileName");
-      const hint = document.getElementById("mediaFileHint");
-      const emptyState = document.getElementById("mediaEmptyState");
-      const previewState = document.getElementById("mediaPreviewState");
-      const imagePreview = document.getElementById("uploadImagePreview");
-      const videoPreview = document.getElementById("uploadVideoPreview");
       mediaFileInput.value = "";
-      clearUploadPreview();
+      selectedMediaItems.forEach(item => URL.revokeObjectURL(item.previewUrl));
+      selectedMediaItems = [];
       hideMediaResult();
       pill.textContent = t("autoDetect");
-      name.textContent = t("uploadMediaPrompt");
-      hint.textContent = t("autoDetectHint");
-      emptyState.classList.remove("hidden");
-      previewState.classList.add("hidden");
-      imagePreview.classList.add("hidden");
-      videoPreview.classList.add("hidden");
+      renderSelectedMedia();
       updateEditorMode("unknown");
       if (showHint) {
         document.getElementById("formHint").textContent = t("mediaSelectionCleared");
@@ -1905,8 +1950,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
     document.getElementById("mediaForm").addEventListener("submit", async event => {
       event.preventDefault();
       const form = event.currentTarget;
-      const file = mediaFileInput.files && mediaFileInput.files[0];
-      if (!file) {
+      if (!selectedMediaItems.length) {
         document.getElementById("formHint").textContent = t("noFile");
         return;
       }
@@ -1916,37 +1960,45 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       hint.textContent = t("readingFile");
       submit.disabled = true;
       try {
-        const dataBase64 = await fileToBase64(file);
-        hint.textContent = t("processing");
-        const response = await fetch("/api/media-jobs", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            filename: file.name,
-            content_type: file.type,
-            data_base64: dataBase64,
-            prompt: data.prompt || "",
-            profile: data.profile,
-            model_version: data.modelVersion,
-            resolution: currentMediaType === "image" ? "original" : data.resolution,
-            output_directory: data.imageOutputDirectory || userSettings.defaultOutputDirectory
-          })
-        });
-        const payload = await response.json();
-        if (!response.ok) throw new Error(payload.message || "Media job failed");
-        jobs = [payload.job, ...jobs];
-        gallery = [...(payload.gallery || []), ...gallery].filter(isMediaGalleryItem);
-        activeJobId = payload.job.id;
-        appendLogLine(`[api] Created ${payload.media_type} job ${payload.job.id}`);
-        appendLogLine(`[media] ${payload.message}`);
-        if (payload.command) appendLogLine(`[next] ${payload.command}`);
-        hint.textContent = payload.message;
-        showMediaResult(payload);
-        if (payload.output_url && userSettings.autoPreviewOutput) {
-          window.open(payload.output_url, "_blank", "noopener");
+        const createdPayloads = [];
+        for (let index = 0; index < selectedMediaItems.length; index += 1) {
+          const item = selectedMediaItems[index];
+          const file = item.file;
+          const detectedType = item.type;
+          hint.textContent = `${t("processing")} ${index + 1}/${selectedMediaItems.length}`;
+          const dataBase64 = await fileToBase64(file);
+          const response = await fetch("/api/media-jobs", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              filename: file.name,
+              content_type: file.type,
+              data_base64: dataBase64,
+              prompt: data.prompt || "",
+              profile: data.profile,
+              model_version: data.modelVersion,
+              resolution: detectedType === "image" ? "original" : data.resolution,
+              output_directory: data.imageOutputDirectory || userSettings.defaultOutputDirectory
+            })
+          });
+          const payload = await response.json();
+          if (!response.ok) throw new Error(payload.message || "Media job failed");
+          createdPayloads.push(payload);
+          jobs = [payload.job, ...jobs];
+          gallery = [...(payload.gallery || []), ...gallery].filter(isMediaGalleryItem);
+          activeJobId = payload.job.id;
+          appendLogLine(`[api] Created ${payload.media_type} job ${payload.job.id}`);
+          appendLogLine(`[media] ${payload.message}`);
+          if (payload.command) appendLogLine(`[next] ${payload.command}`);
         }
-        if ((payload.output_folder || payload.output_path) && userSettings.autoOpenOutputFolder) {
-          openFolder(payload.output_folder || payload.output_path, "media output");
+        const latestPayload = createdPayloads[createdPayloads.length - 1];
+        hint.textContent = selectedMediaItems.length > 1 ? `${t("batchCreated")} ${createdPayloads.length}` : latestPayload.message;
+        showMediaResult(latestPayload);
+        if (latestPayload.output_url && userSettings.autoPreviewOutput) {
+          window.open(latestPayload.output_url, "_blank", "noopener");
+        }
+        if ((latestPayload.output_folder || latestPayload.output_path) && userSettings.autoOpenOutputFolder) {
+          openFolder(latestPayload.output_folder || latestPayload.output_path, "media output");
         }
         render();
         connectSseStream();
@@ -2046,18 +2098,6 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       if (bytes < 1024) return `${bytes} B`;
       if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
       return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-    }
-
-    function clearUploadPreview() {
-      const imagePreview = document.getElementById("uploadImagePreview");
-      const videoPreview = document.getElementById("uploadVideoPreview");
-      if (uploadPreviewUrl) {
-        URL.revokeObjectURL(uploadPreviewUrl);
-        uploadPreviewUrl = null;
-      }
-      imagePreview.removeAttribute("src");
-      videoPreview.pause();
-      videoPreview.removeAttribute("src");
     }
 
     async function openFolderById(artifactId) {
@@ -2373,6 +2413,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       return escapeHtml(value).replace(/`/g, "&#96;");
     }
 
+    renderSelectedMedia();
     render();
     loadSettingsFromServer();
     connectSseStream();
