@@ -279,6 +279,7 @@ def render_index(output_root: Path, selected_job_id: str | None) -> str:
 
 async def stream_pipeline_events(output_root: Path, job_id: str = ""):
     active_job = job_id or latest_job_id(output_root) or "sse_demo"
+    is_demo_stream = active_job == "sse_demo" or not (output_root / sanitize_job_id(active_job)).exists()
     yield sse_payload(
         {
             "type": "log",
@@ -288,8 +289,21 @@ async def stream_pipeline_events(output_root: Path, job_id: str = ""):
         },
         event="log",
     )
-    async for event in simulate_pipeline_stream(active_job):
-        yield sse_payload(event, event=event.get("type", "message"))
+    if is_demo_stream:
+        async for event in simulate_pipeline_stream(active_job):
+            yield sse_payload(event, event=event.get("type", "message"))
+    else:
+        manifest = read_json_or_none(output_root / sanitize_job_id(active_job) / "job_manifest.json") or {}
+        if manifest.get("status") == "queued":
+            yield sse_payload(
+                {
+                    "type": "log",
+                    "job_id": active_job,
+                    "message": "[runner] Job is queued. Actual video pipeline has not started yet.",
+                    "created_at": now_utc(),
+                },
+                event="log",
+            )
 
     while True:
         queued = drain_pipeline_event_queue()
@@ -2831,8 +2845,16 @@ def phase_progress(stages: dict, keys: list[str]) -> int:
 
 
 def frontend_job_status(manifest: dict) -> str:
+    manifest_status = str(manifest.get("status") or "").lower()
+    media_type = manifest.get("input", {}).get("media_type")
+    if manifest_status == "queued" and media_type == "video":
+        return "queued"
+    if manifest_status in {"failed", "error"}:
+        return "failed"
     stages = manifest.get("stages", {})
     if stages.get("render") == "completed":
+        return "completed"
+    if manifest_status == "completed":
         return "completed"
     if any(status == "running" for status in stages.values()):
         return "running"
@@ -3124,7 +3146,7 @@ def create_media_job(output_root: Path, payload: dict) -> dict:
         manifest["stages"] = {"upload": "completed"}
         write_json_file(job_dir / "job_manifest.json", manifest)
         command = f'python main.py run-all --config {profile} --input "{input_path}" --job-id {job_id}'
-        message = "影片已上傳並建立 pipeline job。"
+        message = "影片已上傳並建立 queued job；目前尚未執行實際影片編輯或輸出。"
         publish_pipeline_log(job_id, f"[video] Uploaded {filename}; next command: {command}")
 
     return {

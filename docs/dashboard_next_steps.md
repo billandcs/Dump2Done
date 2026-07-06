@@ -14,6 +14,8 @@
 ## 下一批施工項目
 
 - [ ] 將檔案判斷從前端 MIME/副檔名升級為後端檢測結果回傳，避免瀏覽器 MIME 不準。
+- [ ] 將影片上傳後的 queued job 接到真實 `pipeline/runner.py` 執行流程，而不是只保存 input。
+- [ ] 影片 job 執行完成後自動刷新 gallery，顯示 `renders/*.mp4`。
 - [ ] 影片上傳後讀取基本 metadata，再決定解析度選項，例如橫式/直式、長短片、4K 降載選項。
 - [ ] Profile 選項改由後端根據 `check_env.py` 的 active platform 產生。
 - [ ] 設定頁新增「平台策略」區塊，只顯示目前硬體平台的推薦路線。
@@ -26,8 +28,9 @@
 
 ## 近期優先順序建議
 
-1. 後端回傳媒體檢測結果與適用控制。
-2. Profile 選項由 active platform 生成。
-3. 圖片 before/after 對照。
-4. trash 復原與清空。
-5. 拆分前端模板，降低後續維護成本。
+1. 將影片 queued job 接到真實 runner，並讓 render 產物回到 gallery。
+2. 後端回傳媒體檢測結果與適用控制。
+3. Profile 選項由 active platform 生成。
+4. 圖片 before/after 對照。
+5. trash 復原與清空。
+6. 拆分前端模板，降低後續維護成本。
