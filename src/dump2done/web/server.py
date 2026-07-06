@@ -97,6 +97,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
             media_path = query.get("path", [""])[0]
             self._send_file(self.output_root, job_id, media_path)
             return
+        if parsed.path == "/export":
+            query = parse_qs(parsed.query)
+            export_path = query.get("path", [""])[0]
+            self._send_export_file(self.output_root, export_path)
+            return
         if parsed.path == "/env":
             query = parse_qs(parsed.query)
             report = get_current_env_report(self.output_root.parent / "env_report.json")
@@ -217,10 +222,22 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.send_error(404, "Media not found")
             return
 
+        self._send_static_file(target)
+
+    def _send_export_file(self, output_root: Path, export_path: str) -> None:
+        target = resolve_export_path(output_root, export_path)
+        if not target or not target.exists() or not target.is_file():
+            self.send_error(404, "Export not found")
+            return
+
+        self._send_static_file(target)
+
+    def _send_static_file(self, target: Path) -> None:
         mime_type, _ = mimetypes.guess_type(target.name)
         payload = target.read_bytes()
         self.send_response(200)
         self.send_header("Content-Type", mime_type or "application/octet-stream")
+        self.send_header("Content-Disposition", f'inline; filename="{target.name}"')
         self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
         self.wfile.write(payload)
@@ -487,9 +504,9 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
     </div>
   </header>
 
-  <main class="mx-auto grid max-w-[1500px] gap-5 px-5 py-6 lg:grid-cols-[390px_minmax(0,1fr)] lg:px-8">
-    <section class="space-y-5">
-      <article class="rounded-xl border border-white/10 bg-panel/92 p-5 shadow-glow">
+  <main class="mx-auto grid max-w-[1500px] min-w-0 gap-5 px-5 py-6 lg:grid-cols-[minmax(0,390px)_minmax(0,1fr)] lg:px-8">
+    <section class="min-w-0 space-y-5">
+      <article class="min-w-0 overflow-hidden rounded-xl border border-white/10 bg-panel/92 p-5 shadow-glow">
         <div class="mb-5 flex items-start justify-between gap-3">
           <div>
             <p class="text-xs font-black uppercase tracking-[0.22em] text-orange-300">AI Media Editor</p>
@@ -497,7 +514,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
           </div>
           <span id="mediaTypePill" class="rounded-lg border border-lime-300/30 bg-lime-300/10 px-3 py-1 text-xs font-black text-lime-200">Auto Detect</span>
         </div>
-        <form id="mediaForm" class="grid gap-4">
+        <form id="mediaForm" class="grid min-w-0 gap-4">
           <label id="dropZone" class="grid min-h-44 cursor-pointer place-items-center overflow-hidden rounded-xl border border-dashed border-white/15 bg-black/25 p-4 text-center hover:border-sky-300/50">
             <input id="mediaFile" name="mediaFile" type="file" accept="image/*,video/*" class="hidden" required>
             <span id="mediaEmptyState" class="grid gap-2">
@@ -505,7 +522,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
               <strong class="text-sm">上傳想要編輯的圖片或影片</strong>
               <span class="text-xs text-slate-500">系統會自動判斷 image / video</span>
             </span>
-            <span id="mediaPreviewState" class="hidden w-full grid gap-3">
+            <span id="mediaPreviewState" class="hidden grid w-full min-w-0 gap-3">
               <span class="relative overflow-hidden rounded-lg border border-white/10 bg-black/40">
                 <img id="uploadImagePreview" class="hidden h-44 w-full object-contain" alt="Selected image preview">
                 <video id="uploadVideoPreview" class="hidden h-44 w-full object-contain" muted playsinline controls></video>
@@ -531,7 +548,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
             </div>
             <label class="grid gap-2">
               <span class="text-sm font-bold text-slate-300">輸出資料夾</span>
-              <input name="imageOutputDirectory" value="output\exports\images" class="h-11 rounded-lg border border-white/10 bg-black/40 px-3 text-sm text-slate-100 outline-none focus:border-lime-300/70">
+              <input name="imageOutputDirectory" value="output\exports\images" class="h-11 min-w-0 rounded-lg border border-white/10 bg-black/40 px-3 text-sm text-slate-100 outline-none focus:border-lime-300/70">
             </label>
             <div class="flex flex-wrap gap-2">
               <button class="prompt-chip rounded-lg border border-lime-300/25 bg-lime-300/10 px-3 py-2 text-xs font-black text-lime-100 hover:bg-lime-300/20" type="button" data-prompt="往左旋轉90度">左轉90度</button>
@@ -562,13 +579,16 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
               </select>
             </div>
           </div>
-          <div id="mediaResult" class="hidden rounded-xl border border-sky-300/20 bg-sky-300/[0.05] p-3 text-xs text-slate-300">
-            <div class="flex items-start justify-between gap-3">
+          <div id="mediaResult" class="hidden min-w-0 overflow-hidden rounded-xl border border-sky-300/20 bg-sky-300/[0.05] p-3 text-xs text-slate-300">
+            <div class="grid min-w-0 gap-3">
               <div class="min-w-0">
                 <p class="font-black text-sky-100">輸出完成</p>
                 <p id="mediaResultPath" class="mt-1 break-all font-mono text-slate-300"></p>
               </div>
-              <button id="openMediaResultFolder" class="shrink-0 rounded-lg border border-sky-300/30 px-3 py-2 font-black text-sky-100 hover:bg-sky-300/10" type="button">開啟資料夾</button>
+              <div class="grid grid-cols-2 gap-2">
+                <a id="mediaResultLink" class="rounded-lg border border-sky-300/30 px-3 py-2 text-center font-black text-sky-100 hover:bg-sky-300/10" href="#" target="_blank" rel="noopener">預覽成品</a>
+                <button id="openMediaResultFolder" class="rounded-lg border border-lime-300/30 px-3 py-2 font-black text-lime-100 hover:bg-lime-300/10" type="button">開啟資料夾</button>
+              </div>
             </div>
           </div>
           <button id="mediaSubmit" class="mt-2 inline-flex h-12 items-center justify-center gap-2 rounded-lg bg-lime-300 px-4 text-sm font-black text-slate-950 hover:bg-lime-200 disabled:cursor-not-allowed disabled:bg-slate-600 disabled:text-slate-300" type="submit">
@@ -578,7 +598,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         </form>
       </article>
 
-      <article class="rounded-xl border border-white/10 bg-panel/92 p-5">
+      <article class="min-w-0 overflow-hidden rounded-xl border border-white/10 bg-panel/92 p-5">
         <div class="mb-4 flex items-center justify-between">
           <h2 class="text-lg font-black">任務佇列</h2>
           <button id="refreshJobs" class="rounded-lg border border-white/10 px-3 py-2 text-xs font-black text-slate-300 hover:border-sky-300/50">Refresh</button>
@@ -587,8 +607,8 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       </article>
     </section>
 
-    <section class="grid gap-5">
-      <article class="rounded-xl border border-white/10 bg-panel/92 p-5">
+    <section class="grid min-w-0 gap-5">
+      <article class="min-w-0 overflow-hidden rounded-xl border border-white/10 bg-panel/92 p-5">
         <div class="mb-5 flex flex-wrap items-center justify-between gap-3">
           <div>
             <p class="text-xs font-black uppercase tracking-[0.22em] text-sky-300">Live Pipeline Tracker</p>
@@ -600,10 +620,10 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
             <div class="rounded-lg border border-white/10 bg-white/5 px-3 py-2"><span id="statQueue" class="block text-lg text-orange-300">0</span>Queue</div>
           </div>
         </div>
-        <div id="pipelineSteps" class="grid gap-3 lg:grid-cols-4"></div>
+        <div id="pipelineSteps" class="grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-4"></div>
       </article>
 
-      <article class="rounded-xl border border-white/10 bg-panel/92 p-5">
+      <article class="min-w-0 overflow-hidden rounded-xl border border-white/10 bg-panel/92 p-5">
         <div class="mb-4 flex items-center justify-between">
           <div>
             <p class="text-xs font-black uppercase tracking-[0.22em] text-lime-300">Artifacts</p>
@@ -649,7 +669,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
     const INITIAL_GALLERY = __INITIAL_GALLERY__;
     const SELECTED_JOB_ID = "__SELECTED_JOB_ID__";
     let jobs = [...INITIAL_JOBS];
-    let gallery = [...INITIAL_GALLERY];
+    let gallery = [...INITIAL_GALLERY].filter(isMediaGalleryItem);
     let activeJobId = SELECTED_JOB_ID || (jobs[0] && jobs[0].id);
     let eventSource = null;
     let uploadPreviewUrl = null;
@@ -740,7 +760,8 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
 
     function renderGallery() {
       const grid = document.getElementById("gallery");
-      if (!gallery.length) {
+      const mediaGallery = gallery.filter(isMediaGalleryItem);
+      if (!mediaGallery.length) {
         grid.innerHTML = `
           <div class="rounded-xl border border-dashed border-white/15 bg-black/20 p-6 md:col-span-2 xl:col-span-3">
             <div class="flex items-start gap-3">
@@ -755,8 +776,8 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         lucide.createIcons();
         return;
       }
-      grid.innerHTML = gallery.map(item => `
-        <article class="rounded-xl border border-white/10 bg-black/20 p-4">
+      grid.innerHTML = mediaGallery.map(item => `
+        <article class="min-w-0 rounded-xl border border-white/10 bg-black/20 p-4">
           <div class="mb-4 aspect-video rounded-lg border border-white/10 bg-gradient-to-br ${galleryGradient(item.accent)} p-3">
             <div class="flex h-full items-end justify-between">
               <span class="rounded-md bg-black/50 px-2 py-1 text-xs font-black text-white">${escapeHtml(item.duration)}</span>
@@ -764,7 +785,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
             </div>
           </div>
           <h3 class="truncate font-black">${escapeHtml(item.fileName)}</h3>
-          <p class="mt-1 truncate text-xs font-bold text-slate-500">${escapeHtml(item.jobId)} · ${escapeHtml(item.relativePath)}</p>
+          <p class="mt-1 truncate text-xs font-bold text-slate-500" title="${escapeAttr(item.relativePath)}">${escapeHtml(item.jobId)} · ${escapeHtml(item.relativePath)}</p>
           <dl class="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-400">
             <div><dt class="font-bold text-slate-500">Created</dt><dd>${escapeHtml(item.createdAt)}</dd></div>
             <div><dt class="font-bold text-slate-500">Resolution</dt><dd>${escapeHtml(item.resolution)}</dd></div>
@@ -812,7 +833,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       const response = await fetch("/api/jobs");
       const payload = await response.json();
       jobs = [...payload.jobs];
-      gallery = [...(payload.gallery || [])];
+      gallery = [...(payload.gallery || [])].filter(isMediaGalleryItem);
       if (!jobs.find(job => job.id === activeJobId)) activeJobId = jobs[0] && jobs[0].id;
       logLines.push(`[dashboard] Refreshed ${payload.jobs.length} real job(s) from output/jobs`);
       render();
@@ -830,6 +851,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
     const videoOptions = document.getElementById("videoOptions");
     const mediaResult = document.getElementById("mediaResult");
     const mediaResultPath = document.getElementById("mediaResultPath");
+    const mediaResultLink = document.getElementById("mediaResultLink");
     const openMediaResultFolder = document.getElementById("openMediaResultFolder");
     let currentMediaType = "unknown";
     let lastMediaOutputFolder = "";
@@ -931,7 +953,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         const payload = await response.json();
         if (!response.ok) throw new Error(payload.message || "Media job failed");
         jobs = [payload.job, ...jobs];
-        gallery = [...(payload.gallery || []), ...gallery];
+        gallery = [...(payload.gallery || []), ...gallery].filter(isMediaGalleryItem);
         activeJobId = payload.job.id;
         appendLogLine(`[api] Created ${payload.media_type} job ${payload.job.id}`);
         appendLogLine(`[media] ${payload.message}`);
@@ -977,16 +999,26 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
     function hideMediaResult() {
       mediaResult.classList.add("hidden");
       mediaResultPath.textContent = "";
+      mediaResultLink.href = "#";
+      mediaResultLink.classList.add("pointer-events-none", "opacity-50");
       lastMediaOutputFolder = "";
     }
 
     function showMediaResult(payload) {
       const outputPath = payload.output_path || "";
       const outputFolder = payload.output_folder || "";
+      const outputUrl = payload.output_url || "";
       if (!outputPath && !outputFolder) return;
       lastMediaOutputFolder = outputFolder || outputPath;
       mediaResultPath.textContent = outputPath || outputFolder;
+      mediaResultLink.href = outputUrl || "#";
+      mediaResultLink.classList.toggle("pointer-events-none", !outputUrl);
+      mediaResultLink.classList.toggle("opacity-50", !outputUrl);
       mediaResult.classList.remove("hidden");
+    }
+
+    function isMediaGalleryItem(item) {
+      return item && ["image", "video", "audio"].includes(item.kind);
     }
 
     function detectClientMediaType(file) {
@@ -1058,9 +1090,6 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         const icon = item.kind === "audio" ? "volume-2" : item.kind === "image" ? "image" : "play";
         const label = item.kind === "audio" ? "播放音訊" : item.kind === "image" ? "預覽圖片" : "本地播放";
         return `<button class="rounded-lg border border-sky-300/30 px-3 py-2 text-xs font-black text-sky-100 hover:bg-sky-300/10" onclick="playArtifactById('${escapeAttr(item.id)}')"><i data-lucide="${icon}" class="mr-1 inline h-3 w-3"></i>${label}</button>`;
-      }
-      if (item.artifactUrl) {
-        return `<a class="rounded-lg border border-sky-300/30 px-3 py-2 text-center text-xs font-black text-sky-100 hover:bg-sky-300/10" href="${escapeAttr(item.artifactUrl)}"><i data-lucide="file-json" class="mr-1 inline h-3 w-3"></i>檢視 JSON</a>`;
       }
       return `<button disabled class="cursor-not-allowed rounded-lg border border-white/10 px-3 py-2 text-xs font-black text-slate-500"><i data-lucide="ban" class="mr-1 inline h-3 w-3"></i>不可預覽</button>`;
     }
@@ -2472,6 +2501,7 @@ def create_media_job(output_root: Path, payload: dict) -> dict:
         "gallery": gallery_items,
         "output_path": str(export_path) if media_type == "image" else "",
         "output_folder": str(export_dir) if media_type == "image" else "",
+        "output_url": export_media_url(export_path) if media_type == "image" else "",
     }
 
 
@@ -2687,6 +2717,21 @@ def resolve_job_path(output_root: Path, job_id: str, relative_path: str) -> Path
     return target
 
 
+def resolve_export_path(output_root: Path, export_path: str) -> Path | None:
+    if not export_path:
+        return None
+    raw_path = Path(export_path)
+    target = raw_path.resolve() if raw_path.is_absolute() else (Path.cwd() / raw_path).resolve()
+    output_base = output_root.parent.resolve()
+    try:
+        target.relative_to(output_base)
+    except ValueError:
+        return None
+    if target.suffix.lower() not in {".mp4", ".mov", ".mkv", ".wav", ".png", ".jpg", ".jpeg", ".webp", ".bmp"}:
+        return None
+    return target
+
+
 def read_json_or_none(path: Path) -> dict | None:
     try:
         with path.open("r", encoding="utf-8") as handle:
@@ -2748,6 +2793,12 @@ def media_url(job_id: str, path: str | None) -> str | None:
     if not path:
         return None
     return f"/media?job={quote(job_id)}&path={quote(path)}"
+
+
+def export_media_url(path: Path | str | None) -> str:
+    if not path:
+        return ""
+    return f"/export?path={quote(str(path))}"
 
 
 def metric(label: str, value: object) -> str:
