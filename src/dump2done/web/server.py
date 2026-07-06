@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import base64
+import binascii
 import contextlib
 import html
 import json
@@ -113,6 +115,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
             try:
                 payload = self._read_json_body()
                 response = create_preview_job(self.output_root, payload)
+                self._send_json(response, status=201)
+            except ValueError as exc:
+                self._send_json({"status": "error", "message": str(exc)}, status=400)
+            except Exception as exc:
+                self._send_json({"status": "error", "message": str(exc)}, status=500)
+            return
+        if parsed.path == "/api/media-jobs":
+            try:
+                payload = self._read_json_body()
+                response = create_media_job(self.output_root, payload)
                 self._send_json(response, status=201)
             except ValueError as exc:
                 self._send_json({"status": "error", "message": str(exc)}, status=400)
@@ -479,19 +491,23 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       <article class="rounded-xl border border-white/10 bg-panel/92 p-5 shadow-glow">
         <div class="mb-5 flex items-start justify-between gap-3">
           <div>
-            <p class="text-xs font-black uppercase tracking-[0.22em] text-orange-300">New Job</p>
-            <h1 class="mt-2 text-2xl font-black">新增剪輯任務</h1>
+            <p class="text-xs font-black uppercase tracking-[0.22em] text-orange-300">AI Media Editor</p>
+            <h1 class="mt-2 text-2xl font-black">上傳圖片或影片</h1>
           </div>
-          <span class="rounded-lg border border-lime-300/30 bg-lime-300/10 px-3 py-1 text-xs font-black text-lime-200">Qualcomm Ready</span>
+          <span id="mediaTypePill" class="rounded-lg border border-lime-300/30 bg-lime-300/10 px-3 py-1 text-xs font-black text-lime-200">Auto Detect</span>
         </div>
-        <form id="jobForm" class="grid gap-4">
-          <label class="grid gap-2">
-            <span class="text-sm font-bold text-slate-300">原始影片路徑</span>
-            <input name="videoPath" required value="C:\Users\subil\Videos\raw-demo.mp4" class="h-11 rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-slate-100 outline-none focus:border-sky-300/70" placeholder="C:\path\to\video.mp4">
+        <form id="mediaForm" class="grid gap-4">
+          <label id="dropZone" class="grid min-h-44 cursor-pointer place-items-center rounded-xl border border-dashed border-white/15 bg-black/25 p-4 text-center hover:border-sky-300/50">
+            <input id="mediaFile" name="mediaFile" type="file" accept="image/*,video/*" class="hidden" required>
+            <span class="grid gap-2">
+              <i data-lucide="upload-cloud" class="mx-auto h-8 w-8 text-sky-300"></i>
+              <strong id="mediaFileName" class="text-sm">上傳想要編輯的圖片或影片</strong>
+              <span id="mediaFileHint" class="text-xs text-slate-500">系統會自動判斷 image / video</span>
+            </span>
           </label>
           <label class="grid gap-2">
-            <span class="text-sm font-bold text-slate-300">輸出資料夾</span>
-            <input name="outputDirectory" value="output\jobs" class="h-11 rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-slate-100 outline-none focus:border-sky-300/70" placeholder="output\jobs">
+            <span class="text-sm font-bold text-slate-300">編輯描述</span>
+            <textarea name="prompt" rows="7" class="resize-none rounded-lg border border-white/10 bg-black/30 px-3 py-3 text-sm leading-6 text-slate-100 outline-none focus:border-sky-300/70" placeholder="描述您的編輯，例如：變亮一點、轉成黑白、銳化、旋轉 90 度、水平翻轉。影片會先建立剪輯任務並保存 prompt。"></textarea>
           </label>
           <label class="grid gap-2">
             <span class="text-sm font-bold text-slate-300">Profile</span>
@@ -502,8 +518,19 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
               <option value="configs/intel_windows_openvino.yaml">intel_windows_openvino.yaml</option>
             </select>
           </label>
-          <button class="mt-2 inline-flex h-12 items-center justify-center gap-2 rounded-lg bg-lime-300 px-4 text-sm font-black text-slate-950 hover:bg-lime-200" type="submit">
-            <i data-lucide="rocket" class="h-5 w-5"></i>開始 AI 自動剪輯
+          <div class="grid grid-cols-2 gap-3">
+            <select name="modelVersion" class="h-11 rounded-lg border border-white/10 bg-black/40 px-3 text-sm text-slate-100 outline-none focus:border-sky-300/70">
+              <option value="local-v1">Local V1</option>
+              <option value="v2-placeholder">V2.0</option>
+            </select>
+            <select name="resolution" class="h-11 rounded-lg border border-white/10 bg-black/40 px-3 text-sm text-slate-100 outline-none focus:border-sky-300/70">
+              <option value="original">Original</option>
+              <option value="720p">720P</option>
+              <option value="1080p">1080P</option>
+            </select>
+          </div>
+          <button id="mediaSubmit" class="mt-2 inline-flex h-12 items-center justify-center gap-2 rounded-lg bg-lime-300 px-4 text-sm font-black text-slate-950 hover:bg-lime-200 disabled:cursor-not-allowed disabled:bg-slate-600 disabled:text-slate-300" type="submit">
+            <i data-lucide="sparkles" class="h-5 w-5"></i>建立 / 編輯
           </button>
           <p id="formHint" class="min-h-5 text-xs font-semibold text-slate-400"></p>
         </form>
@@ -569,6 +596,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         <div class="p-4">
           <video id="mediaVideo" class="hidden max-h-[72vh] w-full rounded-lg bg-black" controls playsinline></video>
           <audio id="mediaAudio" class="hidden w-full" controls></audio>
+          <img id="mediaImage" class="hidden max-h-[72vh] w-full rounded-lg object-contain bg-black" alt="Image preview">
         </div>
       </div>
     </div>
@@ -752,32 +780,99 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       logLines.length = 0;
       renderLog();
     });
-    document.getElementById("jobForm").addEventListener("submit", async event => {
+    const mediaFileInput = document.getElementById("mediaFile");
+    mediaFileInput.addEventListener("change", () => {
+      const file = mediaFileInput.files && mediaFileInput.files[0];
+      const pill = document.getElementById("mediaTypePill");
+      const name = document.getElementById("mediaFileName");
+      const hint = document.getElementById("mediaFileHint");
+      if (!file) {
+        pill.textContent = "Auto Detect";
+        name.textContent = "上傳想要編輯的圖片或影片";
+        hint.textContent = "系統會自動判斷 image / video";
+        return;
+      }
+      const detected = detectClientMediaType(file);
+      pill.textContent = detected === "image" ? "Image Edit" : detected === "video" ? "Video Pipeline" : "Unknown";
+      name.textContent = file.name;
+      hint.textContent = `${file.type || "unknown"} · ${formatBytes(file.size)}`;
+    });
+
+    document.getElementById("mediaForm").addEventListener("submit", async event => {
       event.preventDefault();
       const form = event.currentTarget;
+      const file = mediaFileInput.files && mediaFileInput.files[0];
+      if (!file) {
+        document.getElementById("formHint").textContent = "請先選擇圖片或影片。";
+        return;
+      }
       const data = Object.fromEntries(new FormData(form).entries());
       const hint = document.getElementById("formHint");
-      hint.textContent = "送出中...";
+      const submit = document.getElementById("mediaSubmit");
+      hint.textContent = "讀取檔案中...";
+      submit.disabled = true;
       try {
-        const response = await fetch("/api/jobs", {
+        const dataBase64 = await fileToBase64(file);
+        hint.textContent = "上傳並處理中...";
+        const response = await fetch("/api/media-jobs", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(data)
+          body: JSON.stringify({
+            filename: file.name,
+            content_type: file.type,
+            data_base64: dataBase64,
+            prompt: data.prompt || "",
+            profile: data.profile,
+            model_version: data.modelVersion,
+            resolution: data.resolution
+          })
         });
         const payload = await response.json();
-        if (!response.ok) throw new Error(payload.message || "Job creation failed");
+        if (!response.ok) throw new Error(payload.message || "Media job failed");
         jobs = [payload.job, ...jobs];
+        gallery = [...(payload.gallery || []), ...gallery];
         activeJobId = payload.job.id;
-        appendLogLine(`[api] Created queued job ${payload.job.id}`);
-        appendLogLine(`[next] ${payload.command}`);
-        hint.textContent = "已建立預覽任務，命令已寫入 Console。";
+        appendLogLine(`[api] Created ${payload.media_type} job ${payload.job.id}`);
+        appendLogLine(`[media] ${payload.message}`);
+        if (payload.command) appendLogLine(`[next] ${payload.command}`);
+        hint.textContent = payload.message;
         render();
         connectSseStream();
       } catch (error) {
         hint.textContent = error.message;
         appendLogLine(`[error] ${error.message}`);
+      } finally {
+        submit.disabled = false;
       }
     });
+
+    function detectClientMediaType(file) {
+      if ((file.type || "").startsWith("image/")) return "image";
+      if ((file.type || "").startsWith("video/")) return "video";
+      const name = file.name.toLowerCase();
+      if (/\.(png|jpe?g|webp|bmp)$/i.test(name)) return "image";
+      if (/\.(mp4|mov|mkv|webm)$/i.test(name)) return "video";
+      return "unknown";
+    }
+
+    function fileToBase64(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onerror = () => reject(new Error("讀取檔案失敗"));
+        reader.onload = () => {
+          const value = String(reader.result || "");
+          resolve(value.includes(",") ? value.split(",", 2)[1] : value);
+        };
+        reader.readAsDataURL(file);
+      });
+    }
+
+    function formatBytes(bytes) {
+      if (!Number.isFinite(bytes)) return "unknown size";
+      if (bytes < 1024) return `${bytes} B`;
+      if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+      return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+    }
 
     async function openFolderById(artifactId) {
       const item = gallery.find(entry => entry.id === artifactId);
@@ -804,8 +899,10 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
     }
 
     function primaryArtifactAction(item) {
-      if (item.kind === "video" || item.kind === "audio") {
-        return `<button class="rounded-lg border border-sky-300/30 px-3 py-2 text-xs font-black text-sky-100 hover:bg-sky-300/10" onclick="playArtifactById('${escapeAttr(item.id)}')"><i data-lucide="${item.kind === "audio" ? "volume-2" : "play"}" class="mr-1 inline h-3 w-3"></i>${item.kind === "audio" ? "播放音訊" : "本地播放"}</button>`;
+      if (item.kind === "video" || item.kind === "audio" || item.kind === "image") {
+        const icon = item.kind === "audio" ? "volume-2" : item.kind === "image" ? "image" : "play";
+        const label = item.kind === "audio" ? "播放音訊" : item.kind === "image" ? "預覽圖片" : "本地播放";
+        return `<button class="rounded-lg border border-sky-300/30 px-3 py-2 text-xs font-black text-sky-100 hover:bg-sky-300/10" onclick="playArtifactById('${escapeAttr(item.id)}')"><i data-lucide="${icon}" class="mr-1 inline h-3 w-3"></i>${label}</button>`;
       }
       if (item.artifactUrl) {
         return `<a class="rounded-lg border border-sky-300/30 px-3 py-2 text-center text-xs font-black text-sky-100 hover:bg-sky-300/10" href="${escapeAttr(item.artifactUrl)}"><i data-lucide="file-json" class="mr-1 inline h-3 w-3"></i>檢視 JSON</a>`;
@@ -832,15 +929,20 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       const title = document.getElementById("mediaTitle");
       const video = document.getElementById("mediaVideo");
       const audio = document.getElementById("mediaAudio");
+      const image = document.getElementById("mediaImage");
       title.textContent = fileName;
       video.pause();
       audio.pause();
       video.classList.add("hidden");
       audio.classList.add("hidden");
+      image.classList.add("hidden");
       if (kind === "audio") {
         audio.src = mediaUrl;
         audio.classList.remove("hidden");
         audio.play().catch(() => appendLogLine("[player] Browser blocked autoplay; press play manually."));
+      } else if (kind === "image") {
+        image.src = mediaUrl;
+        image.classList.remove("hidden");
       } else {
         video.src = mediaUrl;
         video.classList.remove("hidden");
@@ -853,16 +955,19 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       const modal = document.getElementById("mediaModal");
       const video = document.getElementById("mediaVideo");
       const audio = document.getElementById("mediaAudio");
+      const image = document.getElementById("mediaImage");
       video.pause();
       audio.pause();
       video.removeAttribute("src");
       audio.removeAttribute("src");
+      image.removeAttribute("src");
       modal.classList.add("hidden");
     }
 
     function galleryIcon(kind) {
       if (kind === "video") return "film";
       if (kind === "audio") return "audio-lines";
+      if (kind === "image") return "image";
       if (kind === "json") return "file-json";
       return "file";
     }
@@ -1355,6 +1460,7 @@ def render_env_dashboard(report: dict) -> str:
             dependency_card("pip", basic.get("pip", {}).get("version"), basic.get("pip", {}).get("available"), "package"),
             dependency_card("Git", basic.get("git", {}).get("version"), basic.get("git", {}).get("available"), "git-branch"),
             dependency_card("FFmpeg", basic.get("ffmpeg", {}).get("version"), basic.get("ffmpeg", {}).get("available"), "film"),
+            dependency_card("Pillow", report.get("image_edit", {}).get("pillow_version"), report.get("image_edit", {}).get("pillow_installed"), "image"),
             dependency_card("Ollama", llm.get("ollama_version"), llm.get("ollama_api", {}).get("available"), "brain-circuit"),
             dependency_card("Faster-Whisper", asr.get("ctranslate2_version"), asr.get("faster_whisper_installed"), "audio-lines"),
         ]
@@ -1810,6 +1916,37 @@ def jobs_for_frontend(output_root: Path) -> list[dict]:
 
 def frontend_phases(manifest: dict) -> list[dict]:
     stages = manifest.get("stages", {})
+    if manifest.get("input", {}).get("media_type") == "image":
+        return [
+            {
+                "key": "upload",
+                "label": "媒體上傳",
+                "detail": "Image Upload",
+                "status": "completed" if stages.get("upload") == "completed" else "waiting",
+                "progress": 100 if stages.get("upload") == "completed" else 0,
+            },
+            {
+                "key": "prompt",
+                "label": "提示詞",
+                "detail": "Edit Prompt",
+                "status": "completed" if stages.get("upload") == "completed" else "waiting",
+                "progress": 100 if stages.get("upload") == "completed" else 0,
+            },
+            {
+                "key": "image_edit",
+                "label": "圖片編輯",
+                "detail": "Local Image Edit",
+                "status": stages.get("image_edit", "waiting"),
+                "progress": 100 if stages.get("image_edit") == "completed" else 0,
+            },
+            {
+                "key": "render",
+                "label": "輸出",
+                "detail": "PNG Export",
+                "status": "completed" if stages.get("image_edit") == "completed" else "waiting",
+                "progress": 100 if stages.get("image_edit") == "completed" else 0,
+            },
+        ]
     return [
         {
             "key": "asr",
@@ -1881,7 +2018,7 @@ def gallery_for_frontend(output_root: Path) -> list[dict]:
     gallery = []
     if not output_root.exists():
         return gallery
-    allowed_suffixes = {".mp4", ".mov", ".mkv", ".wav", ".json"}
+    allowed_suffixes = {".mp4", ".mov", ".mkv", ".wav", ".json", ".png", ".jpg", ".jpeg", ".webp", ".bmp"}
     for job_dir in sorted(output_root.iterdir(), key=lambda path: path.stat().st_mtime, reverse=True):
         if not job_dir.is_dir():
             continue
@@ -1905,7 +2042,11 @@ def artifact_sort_key(path: Path) -> tuple[int, float]:
     priority = 5
     if "/renders/" in relative and path.suffix.lower() in {".mp4", ".mov", ".mkv"}:
         priority = 0
+    elif "/renders/" in relative and path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp", ".bmp"}:
+        priority = 0
     elif "/input/" in relative and path.suffix.lower() in {".mp4", ".mov", ".mkv"}:
+        priority = 1
+    elif "/input/" in relative and path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp", ".bmp"}:
         priority = 1
     elif "/audio/" in relative and path.suffix.lower() == ".wav":
         priority = 2
@@ -1934,6 +2075,11 @@ def artifact_card_for_frontend(
         kind = "video"
         duration = format_seconds(video_info.get("duration"))
         resolution = format_resolution(video_info)
+        media_url_value = media_url(job_id, relative_path) or ""
+    elif suffix in {".png", ".jpg", ".jpeg", ".webp", ".bmp"}:
+        kind = "image"
+        duration = "image"
+        resolution = image_resolution(artifact_path)
         media_url_value = media_url(job_id, relative_path) or ""
     elif suffix == ".wav":
         kind = "audio"
@@ -2020,6 +2166,234 @@ def create_preview_job(output_root: Path, payload: dict) -> dict:
             "phases": frontend_phases(manifest),
         },
     }
+
+
+def create_media_job(output_root: Path, payload: dict) -> dict:
+    filename = Path(str(payload.get("filename") or "upload.bin")).name
+    content_type = str(payload.get("content_type") or "")
+    prompt = str(payload.get("prompt") or "").strip()
+    profile = str(payload.get("profile") or "configs/qualcomm_windows_arm64.yaml").strip()
+    allowed_profiles = {
+        "configs/default.yaml",
+        "configs/qualcomm_windows_arm64.yaml",
+        "configs/amd_windows_directml.yaml",
+        "configs/intel_windows_openvino.yaml",
+    }
+    if profile not in allowed_profiles:
+        raise ValueError("Unsupported profile.")
+    model_version = str(payload.get("model_version") or "local-v1")
+    resolution = str(payload.get("resolution") or "original")
+    data_base64 = str(payload.get("data_base64") or "")
+    if not data_base64:
+        raise ValueError("Missing uploaded file data.")
+    try:
+        content = base64.b64decode(data_base64, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise ValueError("Uploaded file data is not valid base64.") from exc
+    max_bytes = 80 * 1024 * 1024
+    if len(content) > max_bytes:
+        raise ValueError("Uploaded file is too large for the local JSON upload path. Limit is 80MB.")
+
+    media_type = detect_media_type(filename, content_type, content)
+    if media_type not in {"image", "video"}:
+        raise ValueError("Only image and video uploads are supported in this editor.")
+
+    job_id = sanitize_job_id(f"{Path(filename).stem}_{media_type}_{uuid.uuid4().hex[:6]}")
+    job_dir = output_root / job_id
+    input_dir = job_dir / "input"
+    reports_dir = job_dir / "reports"
+    renders_dir = job_dir / "renders"
+    input_dir.mkdir(parents=True, exist_ok=True)
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    renders_dir.mkdir(parents=True, exist_ok=True)
+    input_path = input_dir / filename
+    input_path.write_bytes(content)
+
+    created_at = now_utc()
+    manifest = {
+        "schema_version": "1.0",
+        "job_id": job_id,
+        "status": "completed" if media_type == "image" else "queued",
+        "created_at": created_at,
+        "updated_at": created_at,
+        "input": {
+            "source_path": str(input_path.relative_to(job_dir)).replace("\\", "/"),
+            "original_path": filename,
+            "original_filename": filename,
+            "media_type": media_type,
+            "content_type": content_type,
+            "size_bytes": len(content),
+        },
+        "config": {
+            "profile": Path(profile).stem,
+            "effective_config_path": "reports/effective_config.json",
+        },
+        "stages": {},
+        "errors": [],
+    }
+    write_json_file(job_dir / "job_manifest.json", manifest)
+    write_json_file(
+        reports_dir / "edit_request.json",
+        {
+            "schema_version": "1.0",
+            "stage": "edit_request",
+            "status": "received",
+            "created_at": created_at,
+            "media_type": media_type,
+            "prompt": prompt,
+            "model_version": model_version,
+            "resolution": resolution,
+            "input": manifest["input"],
+        },
+    )
+    write_json_file(
+        reports_dir / "effective_config.json",
+        {
+            "profile": profile,
+            "model_version": model_version,
+            "resolution": resolution,
+            "media_type": media_type,
+        },
+    )
+
+    gallery_items: list[dict] = []
+    command = ""
+    message = ""
+    if media_type == "image":
+        edit_result = edit_image_locally(input_path, renders_dir, prompt, resolution)
+        manifest["stages"] = {"upload": "completed", "image_edit": edit_result["status"]}
+        manifest["outputs"] = {"edited_image": edit_result["relative_output"]}
+        write_json_file(job_dir / "job_manifest.json", manifest)
+        write_json_file(reports_dir / "image_edit.json", edit_result)
+        output_path = job_dir / edit_result["relative_output"]
+        gallery_items.append(
+            artifact_card_for_frontend(output_root, job_dir, job_id, output_path, {}, {}, 0)
+        )
+        message = edit_result["message"]
+        publish_pipeline_log(job_id, f"[image] {message}")
+        publish_pipeline_status(job_id, "render", "completed", 100)
+    else:
+        manifest["stages"] = {"upload": "completed"}
+        write_json_file(job_dir / "job_manifest.json", manifest)
+        command = f'python main.py run-all --config {profile} --input "{input_path}" --job-id {job_id}'
+        gallery_items.append(artifact_card_for_frontend(output_root, job_dir, job_id, input_path, {}, {}, 0))
+        message = "影片已上傳並建立 pipeline job。"
+        publish_pipeline_log(job_id, f"[video] Uploaded {filename}; next command: {command}")
+
+    return {
+        "status": "ok",
+        "media_type": media_type,
+        "message": message,
+        "command": command,
+        "job": {
+            "id": job_id,
+            "status": manifest["status"],
+            "profile": Path(profile).name,
+            "videoPath": str(input_path),
+            "outputDirectory": str(output_root),
+            "updatedAt": created_at,
+            "phases": frontend_phases(manifest),
+        },
+        "gallery": gallery_items,
+    }
+
+
+def detect_media_type(filename: str, content_type: str, content: bytes) -> str:
+    lowered = filename.lower()
+    if content_type.startswith("image/") or lowered.endswith((".png", ".jpg", ".jpeg", ".webp", ".bmp")):
+        return "image"
+    if content_type.startswith("video/") or lowered.endswith((".mp4", ".mov", ".mkv", ".webm")):
+        return "video"
+    if content.startswith(b"\x89PNG") or content.startswith(b"\xff\xd8\xff") or content[:4] == b"RIFF":
+        return "image"
+    if b"ftyp" in content[:16]:
+        return "video"
+    return "unknown"
+
+
+def edit_image_locally(input_path: Path, renders_dir: Path, prompt: str, resolution: str) -> dict:
+    created_at = now_utc()
+    try:
+        from PIL import Image, ImageEnhance, ImageFilter, ImageOps
+    except Exception as exc:
+        output_path = renders_dir / f"edited_{input_path.stem}{input_path.suffix}"
+        output_path.write_bytes(input_path.read_bytes())
+        return {
+            "schema_version": "1.0",
+            "stage": "image_edit",
+            "status": "completed",
+            "created_at": created_at,
+            "prompt": prompt,
+            "operations": ["copy_original"],
+            "message": f"Pillow is unavailable; copied original image. ({exc})",
+            "relative_output": str(output_path.parent.name + "/" + output_path.name).replace("\\", "/"),
+        }
+
+    operations: list[str] = []
+    output_path = renders_dir / f"edited_{input_path.stem}.png"
+    prompt_lower = prompt.lower()
+    with Image.open(input_path) as source:
+        image = ImageOps.exif_transpose(source).convert("RGB")
+        if any(token in prompt_lower for token in ["黑白", "灰階", "grayscale", "black and white", "b&w"]):
+            image = ImageOps.grayscale(image).convert("RGB")
+            operations.append("grayscale")
+        if any(token in prompt_lower for token in ["變亮", "提亮", "bright", "brighter"]):
+            image = ImageEnhance.Brightness(image).enhance(1.25)
+            operations.append("brighten")
+        if any(token in prompt_lower for token in ["變暗", "dark", "darker"]):
+            image = ImageEnhance.Brightness(image).enhance(0.78)
+            operations.append("darken")
+        if any(token in prompt_lower for token in ["對比", "contrast"]):
+            image = ImageEnhance.Contrast(image).enhance(1.25)
+            operations.append("contrast")
+        if any(token in prompt_lower for token in ["銳化", "sharp", "sharpen"]):
+            image = image.filter(ImageFilter.SHARPEN)
+            operations.append("sharpen")
+        if any(token in prompt_lower for token in ["模糊", "blur"]):
+            image = image.filter(ImageFilter.GaussianBlur(radius=2))
+            operations.append("blur")
+        if "90" in prompt_lower or "九十" in prompt_lower:
+            image = image.rotate(-90, expand=True)
+            operations.append("rotate_90")
+        if any(token in prompt_lower for token in ["水平翻轉", "mirror", "flip horizontal"]):
+            image = ImageOps.mirror(image)
+            operations.append("flip_horizontal")
+        if any(token in prompt_lower for token in ["垂直翻轉", "flip vertical"]):
+            image = ImageOps.flip(image)
+            operations.append("flip_vertical")
+        if resolution in {"720p", "1080p"}:
+            max_side = 1280 if resolution == "720p" else 1920
+            image.thumbnail((max_side, max_side))
+            operations.append(f"fit_{resolution}")
+        if not operations:
+            operations.append("copy_original_preview")
+        image.save(output_path, format="PNG", optimize=True)
+
+    return {
+        "schema_version": "1.0",
+        "stage": "image_edit",
+        "status": "completed",
+        "created_at": created_at,
+        "prompt": prompt,
+        "operations": operations,
+        "message": "已完成本地圖片編輯。" if operations != ["copy_original_preview"] else "已保存圖片與 prompt；未匹配到本地 deterministic 編輯指令。",
+        "relative_output": str(output_path.parent.name + "/" + output_path.name).replace("\\", "/"),
+    }
+
+
+def write_json_file(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def image_resolution(path: Path) -> str:
+    try:
+        from PIL import Image
+
+        with Image.open(path) as image:
+            return f"{image.width}x{image.height}"
+    except Exception:
+        return "image"
 
 
 def open_folder_request(output_root: Path, payload: dict) -> dict:

@@ -671,6 +671,26 @@ def check_vision() -> dict[str, Any]:
     }
 
 
+def check_image_edit() -> dict[str, Any]:
+    return {
+        "pillow_installed": module_available("PIL"),
+        "pillow_version": import_version("PIL"),
+        "local_operations": [
+            "grayscale",
+            "brighten",
+            "darken",
+            "contrast",
+            "sharpen",
+            "blur",
+            "rotate_90",
+            "flip_horizontal",
+            "flip_vertical",
+            "fit_720p",
+            "fit_1080p",
+        ],
+    }
+
+
 @dataclass
 class LevelDecision:
     level: str
@@ -1003,6 +1023,7 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
     report["asr"] = check_asr()
     report["llm"] = check_ollama(args.ollama_url)
     report["vision"] = check_vision()
+    report["image_edit"] = check_image_edit()
     report["qualcomm_platform"] = check_qualcomm_platform()
     report["amd_platform"] = check_amd_platform()
     report["intel_platform"] = check_intel_platform()
