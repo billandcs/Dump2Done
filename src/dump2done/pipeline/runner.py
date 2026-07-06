@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from dump2done.asr.faster_whisper_backend import transcribe_with_faster_whisper
 from dump2done.core.artifacts import stage_artifact, write_json
 from dump2done.core.job import JobContext
 from dump2done.media.audio import extract_audio_wav, summarize_audio_info
@@ -58,10 +59,19 @@ class PipelineRunner:
         self.job.mark_stage("transcribe", "running")
         audio_info_path = self.job.path("audio/audio_info.json")
         audio_path = self.job.path("audio/audio.wav")
+        transcript_path = self.job.path("transcripts/transcript.json")
+        words_path = self.job.path("transcripts/words.json")
 
-        if self.resume and audio_info_path.exists() and audio_path.exists():
+        if (
+            self.resume
+            and audio_info_path.exists()
+            and audio_path.exists()
+            and transcript_path.exists()
+            and words_path.exists()
+        ):
             self.job.mark_stage("transcribe", "completed")
-            print(f"Reused existing artifact: {audio_info_path}")
+            self.job.mark_stage("asr", "completed")
+            print(f"Reused existing artifacts: {audio_info_path}, {transcript_path}, {words_path}")
             return
 
         media_config = self.config.get("media", {})
@@ -95,17 +105,58 @@ class PipelineRunner:
                 raw_probe=summary["raw_probe"],
             )
             write_json(audio_info_path, artifact)
-            self.job.mark_stage("transcribe", "completed")
             print(f"Wrote {audio_info_path}")
+
+            self.job.mark_stage("asr", "running")
+            asr_config = self.config.get("asr", {})
+            asr_result = transcribe_with_faster_whisper(audio_path, asr_config)
+            transcript_artifact = stage_artifact(
+                "transcribe",
+                "completed",
+                backend=asr_result["backend"],
+                model=asr_result["model"],
+                device=asr_result["device"],
+                compute_type=asr_result["compute_type"],
+                language=asr_result["language"],
+                language_probability=asr_result["language_probability"],
+                duration=asr_result["duration"],
+                duration_after_vad=asr_result["duration_after_vad"],
+                audio_path=relative_audio,
+                outputs={
+                    "transcript": "transcripts/transcript.json",
+                    "words": "transcripts/words.json",
+                },
+                segments=asr_result["segments"],
+                segment_count=len(asr_result["segments"]),
+                word_count=len(asr_result["words"]),
+            )
+            words_artifact = stage_artifact(
+                "transcribe_words",
+                "completed",
+                backend=asr_result["backend"],
+                model=asr_result["model"],
+                language=asr_result["language"],
+                audio_path=relative_audio,
+                words=asr_result["words"],
+                word_count=len(asr_result["words"]),
+            )
+            write_json(transcript_path, transcript_artifact)
+            write_json(words_path, words_artifact)
+            self.job.mark_stage("asr", "completed")
+            self.job.mark_stage("transcribe", "completed")
+            print(f"Wrote {transcript_path}")
+            print(f"Wrote {words_path}")
         except Exception as exc:
             artifact = stage_artifact(
-                "extract_audio",
+                "transcribe",
                 "failed",
                 input_path=manifest["input"].get("source_path"),
                 errors=[{"message": str(exc)}],
             )
-            write_json(audio_info_path, artifact)
+            failure_path = transcript_path if audio_path.exists() else audio_info_path
+            write_json(failure_path, artifact)
             self.job.mark_stage("transcribe", "failed")
+            self.job.mark_stage("asr", "failed")
             raise
 
     def select_clips(self) -> None:

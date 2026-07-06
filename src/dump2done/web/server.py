@@ -19,6 +19,25 @@ STAGE_LABELS = [
     ("render", "輸出"),
 ]
 
+TOOLTIPS = {
+    "Qualcomm Q1": "這代表目前這台機器是 Qualcomm 平台，適合先用 CPU int8 跑本地 MVP，未來再評估 QNN/DirectML 加速。Q1 不是效能分數滿分，而是「可開發、待加速優化」。",
+    "Hardware": "Dump2Done 對目前機器的整體分級。Q 代表 Qualcomm Windows on ARM 路線。",
+    "Qualcomm": "是否偵測到 Qualcomm / Snapdragon 類 CPU 平台。",
+    "Python": "目前 Python 是否可能跑在 x64 模擬層。native ARM64 通常會更適合這台機器。",
+    "Q Readiness": "Qualcomm-ready 程度。Q1 表示先走 CPU 穩定 pipeline，之後準備 QNN/DirectML。",
+    "QNN EP": "ONNX Runtime 的 Qualcomm NPU 執行後端，可讓合適的 ONNX 模型跑在 Hexagon NPU。不是所有模型都適合。",
+    "DirectML EP": "ONNX Runtime 的 Windows GPU 執行後端，可作為 Qualcomm Adreno GPU 的未來 fallback。",
+    "Encoder": "目前影片輸出編碼路線。這台機器本地先用 CPU libx264，不假設 NVENC。",
+    "ASR": "Automatic Speech Recognition，自動語音辨識。這一步會把音訊轉成 transcript.json 和 words.json。",
+    "影片分析": "讀取影片基本資料，例如長度、解析度、FPS、影音 codec。這一步使用 ffprobe。",
+    "音訊抽取": "把影片音軌抽成 16kHz mono WAV，方便後續語音辨識。",
+    "逐字稿": "使用 faster-whisper 把語音轉成段落與 word-level timestamps。",
+    "精華片段": "未來會用 LLM 從逐字稿中挑出可做短影音的候選片段。",
+    "智慧裁切": "未來會分析主體位置，把橫式影片重構成 9:16 或 1:1。",
+    "字幕": "未來會用 word timestamps 產生可燒錄的 ASS 動態字幕。",
+    "輸出": "最後用 FFmpeg 輸出 MP4；這台 Qualcomm 本機先走 CPU encoder。",
+}
+
 
 class DashboardHandler(BaseHTTPRequestHandler):
     output_root = Path("output/jobs")
@@ -102,7 +121,10 @@ def render_index(output_root: Path, selected_job_id: str | None) -> str:
         f"""
         <aside class="sidebar">
           <a class="brand" href="/">
-            <span class="brand-mark">D</span>
+            <span class="brand-mark" aria-label="Dump2Done logo">
+              <span class="mark-play"></span>
+              <span class="mark-stack"></span>
+            </span>
             <span>Dump2Done</span>
           </a>
           <nav class="nav">
@@ -113,7 +135,7 @@ def render_index(output_root: Path, selected_job_id: str | None) -> str:
           </nav>
           <div class="side-note">
             <span>Local</span>
-            <strong>{html.escape(platform_badge(env))}</strong>
+            <strong>{tooltip(platform_badge(env))}</strong>
           </div>
         </aside>
         <div class="shell">
@@ -123,7 +145,7 @@ def render_index(output_root: Path, selected_job_id: str | None) -> str:
               <h1>Dump2Done 工作台</h1>
             </div>
             <div class="top-actions">
-              <a class="pill" href="/env">{html.escape(platform_badge(env))}</a>
+              <a class="pill" href="/env">{tooltip(platform_badge(env))}</a>
               <a class="pill muted-pill" href="/health">Health</a>
             </div>
           </header>
@@ -147,6 +169,7 @@ def render_workspace(job: dict, env: dict) -> str:
     job_id = manifest.get("job_id", job["dir"].name)
     video = job.get("video_info") or {}
     audio = job.get("audio_info") or {}
+    transcript = job.get("transcript_info") or {}
     input_path = manifest.get("input", {}).get("source_path")
     video_src = media_url(job_id, input_path) if input_path else None
     completed, total = stage_progress(manifest)
@@ -203,10 +226,11 @@ def render_workspace(job: dict, env: dict) -> str:
         <div class="panel-title">
           <div>
             <p class="eyebrow">Platform</p>
-            <h2>{html.escape(platform_badge(env))}</h2>
+            <h2>{tooltip(platform_badge(env))}</h2>
           </div>
         </div>
         {render_platform_summary(env)}
+        {render_transcript_summary(transcript)}
         <div class="artifact-summary">
           <h3>Artifacts</h3>
           {raw_links}
@@ -254,9 +278,7 @@ def render_timeline(manifest: dict) -> str:
             state = "locked"
             text = "等待"
         previous_complete = status == "completed"
-        items.append(
-            f'<li class="{state}"><span>{html.escape(label)}</span><strong>{html.escape(text)}</strong></li>'
-        )
+        items.append(f'<li class="{state}"><span>{tooltip(label)}</span><strong>{html.escape(text)}</strong></li>')
     return "\n".join(items)
 
 
@@ -275,6 +297,33 @@ def render_platform_summary(env: dict) -> str:
         ("Encoder", "CPU libx264" if not ffmpeg.get("gpu_encoding_available") else "GPU"),
     ]
     return '<div class="facts">' + "\n".join(render_fact(name, value) for name, value in rows) + "</div>"
+
+
+def render_transcript_summary(transcript: dict) -> str:
+    if not transcript:
+        return """
+        <div class="transcript-card">
+          <h3>ASR Preview</h3>
+          <p class="muted">尚未產生逐字稿。下一步會跑 faster-whisper CPU int8。</p>
+        </div>
+        """
+
+    segments = transcript.get("segments") or []
+    text = " ".join(str(segment.get("text", "")).strip() for segment in segments).strip()
+    if not text:
+        text = "已完成 ASR，但這段音訊沒有偵測到可用語音文字。"
+    preview = text[:260] + ("..." if len(text) > 260 else "")
+    return f"""
+    <div class="transcript-card">
+      <h3>{tooltip("ASR")} Preview</h3>
+      <div class="mini-stats">
+        <span>{html.escape(str(transcript.get("language") or "unknown"))}</span>
+        <span>{html.escape(str(transcript.get("segment_count", 0)))} segments</span>
+        <span>{html.escape(str(transcript.get("word_count", 0)))} words</span>
+      </div>
+      <p>{html.escape(preview)}</p>
+    </div>
+    """
 
 
 def render_raw_links(job: dict) -> str:
@@ -379,6 +428,7 @@ def list_jobs(output_root: Path) -> list[dict]:
                 "artifacts": artifacts,
                 "video_info": read_json_or_none(job_dir / "reports/video_info.json"),
                 "audio_info": read_json_or_none(job_dir / "audio/audio_info.json"),
+                "transcript_info": read_json_or_none(job_dir / "transcripts/transcript.json"),
             }
         )
     return jobs
@@ -438,9 +488,15 @@ def next_command_for_job(job_id: str, manifest: dict) -> dict[str, str]:
             "command": "python main.py transcribe --config configs\\qualcomm_windows_arm64.yaml --job-id "
             + job_id,
         }
+    if stages.get("asr") != "completed":
+        return {
+            "label": "跑 faster-whisper ASR",
+            "command": "python main.py transcribe --config configs\\qualcomm_windows_arm64.yaml --job-id "
+            + job_id,
+        }
     return {
-        "label": "接上 faster-whisper ASR",
-        "command": "下一輪實作：transcript.json + words.json",
+        "label": "進入語意切片",
+        "command": "下一輪實作：segments.json + LLM clip candidates",
     }
 
 
@@ -453,7 +509,7 @@ def media_url(job_id: str, path: str | None) -> str | None:
 def metric(label: str, value: object) -> str:
     return f"""
     <div class="metric">
-      <span>{html.escape(label)}</span>
+      <span>{tooltip(label)}</span>
       <strong>{html.escape(str(value))}</strong>
     </div>
     """
@@ -462,7 +518,7 @@ def metric(label: str, value: object) -> str:
 def render_fact(label: str, value: object) -> str:
     return f"""
     <div class="fact">
-      <span>{html.escape(label)}</span>
+      <span>{tooltip(label)}</span>
       <strong>{html.escape(str(value))}</strong>
     </div>
     """
@@ -481,9 +537,21 @@ def human_artifact_name(path: str) -> str:
         "job_manifest.json": "Job manifest",
         "reports/video_info.json": "Video info",
         "audio/audio_info.json": "Audio info",
+        "transcripts/transcript.json": "Transcript",
+        "transcripts/words.json": "Words",
         "reports/effective_config.json": "Config",
     }
     return mapping.get(path, Path(path).name)
+
+
+def tooltip(label: str) -> str:
+    text = TOOLTIPS.get(label)
+    if not text:
+        return html.escape(label)
+    return (
+        f'<span class="tip" tabindex="0" title="{html.escape(text)}" data-tip="{html.escape(text)}">'
+        f"{html.escape(label)}</span>"
+    )
 
 
 def format_seconds(value: object) -> str:
@@ -557,6 +625,7 @@ def page(title: str, body: str) -> str:
       font-family: Inter, "Microsoft JhengHei", "Noto Sans TC", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }}
     * {{ box-sizing: border-box; }}
+    html {{ overflow-x: hidden; }}
     body {{
       margin: 0;
       min-height: 100vh;
@@ -603,12 +672,34 @@ def page(title: str, body: str) -> str:
     .brand-mark {{
       width: 34px;
       height: 34px;
-      display: grid;
-      place-items: center;
+      display: block;
+      position: relative;
       border-radius: 8px;
-      background: linear-gradient(135deg, #1dc9ff, #1765ff);
-      color: white;
-      font-weight: 900;
+      background: #06111d;
+      border: 1px solid rgba(57, 168, 255, 0.5);
+      box-shadow: 0 0 22px rgba(57, 168, 255, 0.2);
+      overflow: hidden;
+    }}
+    .mark-play {{
+      position: absolute;
+      left: 8px;
+      top: 7px;
+      width: 0;
+      height: 0;
+      border-top: 10px solid transparent;
+      border-bottom: 10px solid transparent;
+      border-left: 16px solid var(--blue);
+      filter: drop-shadow(0 0 8px rgba(57, 168, 255, 0.8));
+    }}
+    .mark-stack {{
+      position: absolute;
+      right: 6px;
+      top: 8px;
+      width: 4px;
+      height: 18px;
+      border-radius: 4px;
+      background: var(--green);
+      box-shadow: -6px 4px 0 rgba(66, 211, 146, 0.55);
     }}
     .nav {{ display: grid; gap: 8px; }}
     .nav a {{
@@ -668,6 +759,49 @@ def page(title: str, body: str) -> str:
       white-space: nowrap;
     }}
     .muted-pill {{ color: var(--muted); }}
+    .tip {{
+      position: relative;
+      cursor: help;
+      border-bottom: 1px dotted rgba(155, 215, 255, 0.7);
+    }}
+    .tip::after {{
+      content: attr(data-tip);
+      position: absolute;
+      left: 0;
+      bottom: calc(100% + 10px);
+      width: min(320px, 72vw);
+      padding: 12px 13px;
+      border: 1px solid var(--line-2);
+      border-radius: 8px;
+      background: #151b23;
+      color: #e9f2fb;
+      font-size: 13px;
+      line-height: 1.45;
+      font-weight: 600;
+      text-transform: none;
+      box-shadow: 0 16px 38px rgba(0, 0, 0, 0.42);
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+      transform: translateY(6px);
+      transition: opacity 140ms ease, transform 140ms ease;
+      z-index: 20;
+    }}
+    .tip:hover::after, .tip:focus::after {{
+      opacity: 1;
+      visibility: visible;
+      transform: translateY(0);
+    }}
+    .top-actions .tip::after {{
+      top: calc(100% + 10px);
+      bottom: auto;
+      left: auto;
+      right: 0;
+    }}
+    .insight-panel .tip::after {{
+      left: auto;
+      right: 0;
+    }}
     .workspace {{
       display: grid;
       grid-template-columns: minmax(230px, 0.8fr) minmax(340px, 1.25fr) minmax(210px, 0.75fr);
@@ -777,6 +911,35 @@ def page(title: str, body: str) -> str:
     }}
     .facts {{ display: grid; gap: 10px; }}
     .artifact-summary {{ margin-top: 20px; }}
+    .transcript-card {{
+      margin-top: 18px;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #0a0d11;
+    }}
+    .transcript-card p {{
+      color: var(--soft);
+      line-height: 1.55;
+      font-size: 14px;
+    }}
+    .mini-stats {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 10px;
+    }}
+    .mini-stats span {{
+      min-height: 26px;
+      display: inline-flex;
+      align-items: center;
+      padding: 0 9px;
+      border-radius: 999px;
+      background: rgba(57, 168, 255, 0.12);
+      color: #b9e3ff;
+      font-size: 12px;
+      font-weight: 800;
+    }}
     .artifact-chip {{
       display: grid;
       gap: 4px;
