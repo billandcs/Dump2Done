@@ -20,7 +20,9 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
+from urllib import error as urllib_error
 from urllib.parse import parse_qs, quote, urlparse
+from urllib import request as urllib_request
 
 
 SRC_ROOT = Path(__file__).resolve().parents[2]
@@ -55,6 +57,10 @@ DASHBOARD_DEFAULT_SETTINGS = {
     "localLlmProvider": "ollama_demo",
     "localLlmEndpoint": "http://127.0.0.1:11434",
     "visionProvider": "local_pillow_mvp",
+    "imageEditProvider": "auto",
+    "automatic1111Endpoint": "http://127.0.0.1:7860",
+    "comfyuiEndpoint": "http://127.0.0.1:8188",
+    "openaiImageModel": "gpt-image-1.5",
     "asrProvider": "faster_whisper_cpu_demo",
     "onlineFallbackPolicy": "warn_only",
 }
@@ -801,7 +807,21 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
               </span>
               <input id="imageOutputDirectory" name="imageOutputDirectory" value="output" class="h-11 min-w-0 rounded-lg border border-white/10 bg-black/40 px-3 text-sm text-slate-100 outline-none focus:border-lime-300/70">
             </label>
+            <label class="grid gap-2">
+              <span class="flex items-center gap-2 text-sm font-bold text-slate-300">
+                <span data-i18n="imageEditProvider">生成式圖片路線</span>
+                <button class="field-help grid h-5 w-5 place-items-center rounded-full border border-lime-300/35 bg-lime-300/10 text-[11px] font-black text-lime-100 hover:bg-lime-300/20" type="button" data-help-key="imageEditProviderHelp">?</button>
+              </span>
+              <select id="imageEditProvider" name="imageEditProvider" class="h-11 rounded-lg border border-white/10 bg-black/40 px-3 text-sm text-slate-100 outline-none focus:border-lime-300/70">
+                <option value="auto" data-i18n="imageProviderAuto">Auto：濾鏡用本地，生成式自動找可用服務</option>
+                <option value="local_a1111" data-i18n="imageProviderA1111">本地 Automatic1111 / Stable Diffusion</option>
+                <option value="openai" data-i18n="imageProviderOpenAI">雲端 OpenAI Images API</option>
+                <option value="pillow" data-i18n="imageProviderPillow">本地 Pillow 濾鏡</option>
+              </select>
+              <p class="text-xs leading-5 text-slate-500" data-i18n="imageEditProviderHint">「貓變狗」屬於生成式編輯，需要本地 diffusion server 或 OpenAI API key；Pillow 只做旋轉、亮度、黑白等非生成式處理。</p>
+            </label>
             <div class="flex flex-wrap gap-2">
+              <button class="prompt-chip rounded-lg border border-orange-300/25 bg-orange-300/10 px-3 py-2 text-xs font-black text-orange-100 hover:bg-orange-300/20" type="button" data-prompt="把貓變成狗，保留照片構圖與背景">貓變狗</button>
               <button class="prompt-chip rounded-lg border border-lime-300/25 bg-lime-300/10 px-3 py-2 text-xs font-black text-lime-100 hover:bg-lime-300/20" type="button" data-prompt="往左旋轉90度">左轉90度</button>
               <button class="prompt-chip rounded-lg border border-lime-300/25 bg-lime-300/10 px-3 py-2 text-xs font-black text-lime-100 hover:bg-lime-300/20" type="button" data-prompt="往右旋轉90度">右轉90度</button>
               <button class="prompt-chip rounded-lg border border-lime-300/25 bg-lime-300/10 px-3 py-2 text-xs font-black text-lime-100 hover:bg-lime-300/20" type="button" data-prompt="變亮一點並銳化">變亮 + 銳化</button>
@@ -1028,6 +1048,20 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
               </label>
               <label class="grid gap-2">
                 <span class="flex items-center gap-2 text-xs font-black uppercase tracking-wide text-slate-400">
+                  <span data-i18n="automatic1111Endpoint">Automatic1111 Endpoint</span>
+                  <button class="compute-help grid h-5 w-5 place-items-center rounded-full border border-lime-300/35 bg-lime-300/10 text-[11px] font-black text-lime-100 hover:bg-lime-300/20" type="button" data-help-key="automatic1111EndpointHelp">?</button>
+                </span>
+                <input id="automatic1111Endpoint" class="h-11 rounded-lg border border-white/10 bg-black/40 px-3 text-sm text-slate-100 outline-none focus:border-lime-300/70" placeholder="http://127.0.0.1:7860">
+              </label>
+              <label class="grid gap-2">
+                <span class="flex items-center gap-2 text-xs font-black uppercase tracking-wide text-slate-400">
+                  <span data-i18n="openaiImageModel">OpenAI Image Model</span>
+                  <button class="compute-help grid h-5 w-5 place-items-center rounded-full border border-orange-300/35 bg-orange-300/10 text-[11px] font-black text-orange-100 hover:bg-orange-300/20" type="button" data-help-key="openaiImageModelHelp">?</button>
+                </span>
+                <input id="openaiImageModel" class="h-11 rounded-lg border border-white/10 bg-black/40 px-3 text-sm text-slate-100 outline-none focus:border-orange-300/70" placeholder="gpt-image-1.5">
+              </label>
+              <label class="grid gap-2">
+                <span class="flex items-center gap-2 text-xs font-black uppercase tracking-wide text-slate-400">
                   <span data-i18n="asrProvider">Speech / ASR Provider</span>
                   <button class="compute-help grid h-5 w-5 place-items-center rounded-full border border-sky-300/35 bg-sky-300/10 text-[11px] font-black text-sky-100 hover:bg-sky-300/20" type="button" data-help-key="asrProviderHelp">?</button>
                 </span>
@@ -1112,6 +1146,13 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         genericPromptPlaceholder: "先描述你想完成的結果。選擇圖片會進入圖片編輯；選擇影片會啟動影片 runner。",
         imageMode: "圖片模式",
         imageModeHelp: "不需要 Profile 或解析度選單。上傳圖片、輸入指令，完成後會匯出 PNG 並在下方顯示完整路徑。",
+        imageEditProvider: "生成式圖片路線",
+        imageEditProviderHint: "「貓變狗」屬於生成式編輯，需要本地 diffusion server 或 OpenAI API key；Pillow 只做旋轉、亮度、黑白等非生成式處理。",
+        imageProviderAuto: "Auto：濾鏡用本地，生成式自動找可用服務",
+        imageProviderA1111: "本地 Automatic1111 / Stable Diffusion",
+        imageProviderOpenAI: "雲端 OpenAI Images API",
+        imageProviderPillow: "本地 Pillow 濾鏡",
+        imageEditProviderHelp: "圖片分兩種：旋轉、亮度、黑白這類確定性操作會用 Pillow 本地完成；貓變狗、替換物件、生成新內容需要 diffusion 或 OpenAI 這類生成式模型。Auto 會先找本地 Automatic1111，沒有才依 fallback 設定考慮 OpenAI。",
         outputFolder: "輸出資料夾",
         outputComplete: "輸出完成",
         previewOutput: "預覽成品",
@@ -1228,6 +1269,8 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         localLlmProvider: "Local LLM Provider",
         localLlmEndpoint: "Local LLM Endpoint",
         visionProvider: "Vision / Video Provider",
+        automatic1111Endpoint: "Automatic1111 Endpoint",
+        openaiImageModel: "OpenAI Image Model",
         asrProvider: "Speech / ASR Provider",
         onlineFallbackPolicy: "Online Fallback Policy",
         fallbackWarnOnly: "只提示，不自動送線上",
@@ -1240,6 +1283,8 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         localLlmProviderHelp: "決定文字理解、任務規劃、prompt 解析要交給誰。Ollama local 代表未來走本機 LLM；OpenAI online fallback 代表遇到本機模型做不到的語意規劃時，先提示再考慮線上；None 則關閉這類 LLM 路由。目前是演示，不會真的呼叫模型。",
         localLlmEndpointHelp: "本地 LLM 服務網址，例如 Ollama 預設是 http://127.0.0.1:11434。未來後端會用它檢查模型列表、送出結構化 prompt、取得剪輯或編輯計畫。現在只保存設定，不會主動連線。",
         visionProviderHelp: "決定圖片/影片視覺處理走哪條路。Local Pillow / FFmpeg MVP 是目前已能本地輸出的基礎版；ONNX DirectML 與 Qualcomm QNN 是未來把 segmentation、tracking、影像模型搬到本機 GPU/NPU 的路線；Online video edit placeholder 代表高品質生成式影片編輯目前仍偏線上。",
+        automatic1111EndpointHelp: "本地 Stable Diffusion WebUI API 位址。若你啟動 AUTOMATIC1111 並開啟 --api，Dump2Done 會用 /sdapi/v1/img2img 做貓變狗、物件替換等 image-to-image。這是目前最實際的本地生成式圖片路線。",
+        openaiImageModelHelp: "OpenAI Images API 的模型名稱。需要環境變數 OPENAI_API_KEY；ChatGPT Pro 不會自動等於 API key。雲端路線適合本機 diffusion 尚未部署時使用。",
         asrProviderHelp: "決定語音辨識來源。Faster-Whisper CPU local 是目前可在本機跑的路線；ONNX ASR future 是未來優化到本地加速後端；Online ASR placeholder 代表雲端備援。差別在速度、隱私、模型品質與硬體需求。",
         onlineFallbackPolicyHelp: "控制遇到本地資源做不到時是否可使用線上服務。只提示代表系統只告知需要線上能力，不會自動送出；完全關閉代表永遠不走線上；每次詢問代表未來需要你確認後才會送出。"
       },
@@ -1261,6 +1306,13 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         genericPromptPlaceholder: "Describe the result you want. Images use image edit mode; videos start the video runner.",
         imageMode: "Image Mode",
         imageModeHelp: "No profile or resolution menu is needed. Upload an image, enter a prompt, and the PNG output path will appear below.",
+        imageEditProvider: "Generative image route",
+        imageEditProviderHint: "Cat-to-dog is generative editing. It needs a local diffusion server or an OpenAI API key. Pillow only handles rotation, brightness, grayscale, and similar deterministic edits.",
+        imageProviderAuto: "Auto: local filters, then available generative service",
+        imageProviderA1111: "Local Automatic1111 / Stable Diffusion",
+        imageProviderOpenAI: "Cloud OpenAI Images API",
+        imageProviderPillow: "Local Pillow filters",
+        imageEditProviderHelp: "There are two image paths: deterministic operations such as rotate, brightness, and grayscale run locally with Pillow; cat-to-dog, object replacement, and new visual content need a generative model such as local diffusion or OpenAI. Auto tries local Automatic1111 first, then OpenAI depending on fallback settings.",
         outputFolder: "Output Folder",
         outputComplete: "Output Ready",
         previewOutput: "Preview Output",
@@ -1377,6 +1429,8 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         localLlmProvider: "Local LLM Provider",
         localLlmEndpoint: "Local LLM Endpoint",
         visionProvider: "Vision / Video Provider",
+        automatic1111Endpoint: "Automatic1111 Endpoint",
+        openaiImageModel: "OpenAI Image Model",
         asrProvider: "Speech / ASR Provider",
         onlineFallbackPolicy: "Online Fallback Policy",
         fallbackWarnOnly: "Warn only, never auto-send online",
@@ -1389,6 +1443,8 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         localLlmProviderHelp: "Chooses who handles text reasoning, task planning, and prompt parsing. Ollama local means a future local LLM route; OpenAI online fallback means online help can be suggested when local planning is not enough; None disables this LLM route. This is demo-only for now.",
         localLlmEndpointHelp: "The local LLM service URL. Ollama commonly uses http://127.0.0.1:11434. Later the backend can use this to inspect models, send structured prompts, and receive edit plans. For now it is only saved.",
         visionProviderHelp: "Chooses the image/video processing route. Local Pillow / FFmpeg MVP is the current local output path. ONNX DirectML and Qualcomm QNN are future local GPU/NPU acceleration paths for segmentation, tracking, and vision models. Online video edit placeholder means high-quality generative video editing is still online-leaning.",
+        automatic1111EndpointHelp: "Local Stable Diffusion WebUI API URL. If AUTOMATIC1111 is running with --api, Dump2Done calls /sdapi/v1/img2img for cat-to-dog, object replacement, and other image-to-image edits. This is the most practical local generative image route right now.",
+        openaiImageModelHelp: "OpenAI Images API model name. Requires OPENAI_API_KEY in the environment; ChatGPT Pro does not automatically provide an API key. The cloud route is useful when local diffusion is not deployed yet.",
         asrProviderHelp: "Chooses the speech recognition route. Faster-Whisper CPU local is the current local option; ONNX ASR future is a future accelerated local backend; Online ASR placeholder is cloud fallback. The tradeoffs are speed, privacy, quality, and hardware needs.",
         onlineFallbackPolicyHelp: "Controls whether online services may be used when local resources cannot complete a task. Warn only never auto-sends; disabled blocks online fallback; ask each time means future online use requires your confirmation."
       },
@@ -1410,6 +1466,13 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         genericPromptPlaceholder: "完成したい結果を入力してください。画像は画像編集、動画は video runner に切り替わります。",
         imageMode: "画像モード",
         imageModeHelp: "Profile や解像度メニューは不要です。画像と指示を入力すると PNG を出力し、下にパスを表示します。",
+        imageEditProvider: "生成画像ルート",
+        imageEditProviderHint: "猫を犬に変える処理は生成式編集です。ローカル diffusion server または OpenAI API key が必要です。Pillow は回転、明るさ、白黒などの確定的編集のみ対応します。",
+        imageProviderAuto: "Auto：フィルターはローカル、生成は利用可能なサービス",
+        imageProviderA1111: "ローカル Automatic1111 / Stable Diffusion",
+        imageProviderOpenAI: "クラウド OpenAI Images API",
+        imageProviderPillow: "ローカル Pillow フィルター",
+        imageEditProviderHelp: "画像処理には二種類あります。回転、明るさ、白黒などの確定的処理は Pillow でローカル実行できます。猫を犬にする、物体を置き換える、新しい内容を生成する処理には local diffusion または OpenAI のような生成モデルが必要です。Auto はまず Automatic1111 を探し、fallback 設定に応じて OpenAI を検討します。",
         outputFolder: "出力フォルダー",
         outputComplete: "出力完了",
         previewOutput: "出力をプレビュー",
@@ -1526,6 +1589,8 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         localLlmProvider: "Local LLM Provider",
         localLlmEndpoint: "Local LLM Endpoint",
         visionProvider: "Vision / Video Provider",
+        automatic1111Endpoint: "Automatic1111 Endpoint",
+        openaiImageModel: "OpenAI Image Model",
         asrProvider: "Speech / ASR Provider",
         onlineFallbackPolicy: "Online Fallback Policy",
         fallbackWarnOnly: "警告のみ、自動オンライン送信なし",
@@ -1538,6 +1603,8 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         localLlmProviderHelp: "テキスト理解、タスク計画、prompt 解析をどこで処理するかを決めます。Ollama local は将来のローカル LLM ルート、OpenAI online fallback はローカルで不足する場合のオンライン候補、None は LLM ルート無効です。現在はデモです。",
         localLlmEndpointHelp: "ローカル LLM サービスの URL です。Ollama は通常 http://127.0.0.1:11434 を使います。将来はモデル一覧確認、構造化 prompt、編集計画の取得に使います。今は保存のみです。",
         visionProviderHelp: "画像/動画処理ルートを決めます。Local Pillow / FFmpeg MVP は現在のローカル出力ルート。ONNX DirectML と Qualcomm QNN は segmentation、tracking、Vision モデルをローカル GPU/NPU へ移す将来ルート。Online video edit placeholder は高品質生成式動画編集がまだオンライン寄りであることを示します。",
+        automatic1111EndpointHelp: "ローカル Stable Diffusion WebUI API の URL です。AUTOMATIC1111 を --api 付きで起動すると、Dump2Done は /sdapi/v1/img2img で猫を犬にする、物体置換などの image-to-image 編集を行います。現時点で最も現実的なローカル生成式画像ルートです。",
+        openaiImageModelHelp: "OpenAI Images API のモデル名です。環境変数 OPENAI_API_KEY が必要です。ChatGPT Pro は API key とは別です。ローカル diffusion が未導入の場合のクラウドルートです。",
         asrProviderHelp: "音声認識ルートを決めます。Faster-Whisper CPU local は現在のローカル選択肢、ONNX ASR future は将来の高速化ローカル backend、Online ASR placeholder はクラウド fallback です。速度、プライバシー、品質、必要ハードウェアが違います。",
         onlineFallbackPolicyHelp: "ローカル資源だけではできない場合にオンラインサービスを使えるかを制御します。警告のみは自動送信なし、無効化はオンライン禁止、毎回確認は将来オンライン利用前に確認します。"
       }
@@ -1551,6 +1618,10 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       localLlmProvider: "ollama_demo",
       localLlmEndpoint: "http://127.0.0.1:11434",
       visionProvider: "local_pillow_mvp",
+      imageEditProvider: "auto",
+      automatic1111Endpoint: "http://127.0.0.1:7860",
+      comfyuiEndpoint: "http://127.0.0.1:8188",
+      openaiImageModel: "gpt-image-1.5",
       asrProvider: "faster_whisper_cpu_demo",
       onlineFallbackPolicy: "warn_only"
     };
@@ -1679,6 +1750,9 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       const localLlmProvider = document.getElementById("localLlmProvider");
       const localLlmEndpoint = document.getElementById("localLlmEndpoint");
       const visionProvider = document.getElementById("visionProvider");
+      const imageEditProvider = document.getElementById("imageEditProvider");
+      const automatic1111Endpoint = document.getElementById("automatic1111Endpoint");
+      const openaiImageModel = document.getElementById("openaiImageModel");
       const asrProvider = document.getElementById("asrProvider");
       const onlineFallbackPolicy = document.getElementById("onlineFallbackPolicy");
       if (defaultOutput) defaultOutput.value = userSettings.defaultOutputDirectory;
@@ -1691,6 +1765,9 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       if (localLlmProvider) localLlmProvider.value = userSettings.localLlmProvider || DEFAULT_SETTINGS.localLlmProvider;
       if (localLlmEndpoint) localLlmEndpoint.value = userSettings.localLlmEndpoint || DEFAULT_SETTINGS.localLlmEndpoint;
       if (visionProvider) visionProvider.value = userSettings.visionProvider || DEFAULT_SETTINGS.visionProvider;
+      if (imageEditProvider) imageEditProvider.value = userSettings.imageEditProvider || DEFAULT_SETTINGS.imageEditProvider;
+      if (automatic1111Endpoint) automatic1111Endpoint.value = userSettings.automatic1111Endpoint || DEFAULT_SETTINGS.automatic1111Endpoint;
+      if (openaiImageModel) openaiImageModel.value = userSettings.openaiImageModel || DEFAULT_SETTINGS.openaiImageModel;
       if (asrProvider) asrProvider.value = userSettings.asrProvider || DEFAULT_SETTINGS.asrProvider;
       if (onlineFallbackPolicy) onlineFallbackPolicy.value = userSettings.onlineFallbackPolicy || DEFAULT_SETTINGS.onlineFallbackPolicy;
     }
@@ -2047,6 +2124,10 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         localLlmProvider: document.getElementById("localLlmProvider").value || DEFAULT_SETTINGS.localLlmProvider,
         localLlmEndpoint: document.getElementById("localLlmEndpoint").value.trim() || DEFAULT_SETTINGS.localLlmEndpoint,
         visionProvider: document.getElementById("visionProvider").value || DEFAULT_SETTINGS.visionProvider,
+        imageEditProvider: document.getElementById("imageEditProvider").value || DEFAULT_SETTINGS.imageEditProvider,
+        automatic1111Endpoint: document.getElementById("automatic1111Endpoint").value.trim() || DEFAULT_SETTINGS.automatic1111Endpoint,
+        comfyuiEndpoint: DEFAULT_SETTINGS.comfyuiEndpoint,
+        openaiImageModel: document.getElementById("openaiImageModel").value.trim() || DEFAULT_SETTINGS.openaiImageModel,
         asrProvider: document.getElementById("asrProvider").value || DEFAULT_SETTINGS.asrProvider,
         onlineFallbackPolicy: document.getElementById("onlineFallbackPolicy").value || DEFAULT_SETTINGS.onlineFallbackPolicy
       };
@@ -2260,7 +2341,12 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
               profile: data.profile,
               model_version: data.modelVersion,
               resolution: detectedType === "image" ? "original" : data.resolution,
-              output_directory: data.imageOutputDirectory || userSettings.defaultOutputDirectory
+              output_directory: data.imageOutputDirectory || userSettings.defaultOutputDirectory,
+              image_edit_provider: detectedType === "image" ? (data.imageEditProvider || userSettings.imageEditProvider || "auto") : "",
+              automatic1111_endpoint: userSettings.automatic1111Endpoint,
+              comfyui_endpoint: userSettings.comfyuiEndpoint,
+              openai_image_model: userSettings.openaiImageModel,
+              online_fallback_policy: userSettings.onlineFallbackPolicy
             })
           });
           const payload = await response.json();
@@ -4099,6 +4185,29 @@ def create_media_job(output_root: Path, payload: dict) -> dict:
     model_version = str(payload.get("model_version") or "local-v1")
     resolution = str(payload.get("resolution") or "original")
     requested_output_directory = str(payload.get("output_directory") or "").strip()
+    settings = load_dashboard_settings(output_root)
+    image_edit_provider = coerce_choice(
+        payload.get("image_edit_provider") or settings.get("imageEditProvider"),
+        {"auto", "pillow", "local_a1111", "local_comfyui", "openai"},
+        "auto",
+    )
+    automatic1111_endpoint = coerce_endpoint(
+        payload.get("automatic1111_endpoint") or settings.get("automatic1111Endpoint"),
+        DASHBOARD_DEFAULT_SETTINGS["automatic1111Endpoint"],
+    )
+    comfyui_endpoint = coerce_endpoint(
+        payload.get("comfyui_endpoint") or settings.get("comfyuiEndpoint"),
+        DASHBOARD_DEFAULT_SETTINGS["comfyuiEndpoint"],
+    )
+    openai_image_model = coerce_short_text(
+        payload.get("openai_image_model") or settings.get("openaiImageModel"),
+        DASHBOARD_DEFAULT_SETTINGS["openaiImageModel"],
+    )
+    online_fallback_policy = coerce_choice(
+        payload.get("online_fallback_policy") or settings.get("onlineFallbackPolicy"),
+        {"warn_only", "disabled", "ask_each_time"},
+        "warn_only",
+    )
     data_base64 = str(payload.get("data_base64") or "")
     if not data_base64:
         raise ValueError("Missing uploaded file data.")
@@ -4161,6 +4270,11 @@ def create_media_job(output_root: Path, payload: dict) -> dict:
             "model_version": model_version,
             "resolution": resolution,
             "requested_output_directory": requested_output_directory,
+            "image_edit_provider": image_edit_provider,
+            "automatic1111_endpoint": automatic1111_endpoint,
+            "comfyui_endpoint": comfyui_endpoint,
+            "openai_image_model": openai_image_model,
+            "online_fallback_policy": online_fallback_policy,
             "input": manifest["input"],
         },
     )
@@ -4172,6 +4286,11 @@ def create_media_job(output_root: Path, payload: dict) -> dict:
             "resolution": resolution,
             "media_type": media_type,
             "requested_output_directory": requested_output_directory,
+            "image_edit_provider": image_edit_provider,
+            "automatic1111_endpoint": automatic1111_endpoint,
+            "comfyui_endpoint": comfyui_endpoint,
+            "openai_image_model": openai_image_model,
+            "online_fallback_policy": online_fallback_policy,
         },
     )
 
@@ -4179,7 +4298,38 @@ def create_media_job(output_root: Path, payload: dict) -> dict:
     command = ""
     message = ""
     if media_type == "image":
-        edit_result = edit_image_locally(input_path, renders_dir, prompt, resolution)
+        try:
+            edit_result = edit_image_with_provider(
+                input_path=input_path,
+                renders_dir=renders_dir,
+                prompt=prompt,
+                resolution=resolution,
+                provider=image_edit_provider,
+                automatic1111_endpoint=automatic1111_endpoint,
+                comfyui_endpoint=comfyui_endpoint,
+                openai_image_model=openai_image_model,
+                online_fallback_policy=online_fallback_policy,
+            )
+        except Exception as exc:
+            manifest["status"] = "failed"
+            manifest["stages"] = {"upload": "completed", "image_edit": "failed"}
+            manifest["updated_at"] = now_utc()
+            manifest.setdefault("errors", []).append({"message": str(exc), "created_at": now_utc()})
+            write_json_file(job_dir / "job_manifest.json", manifest)
+            write_json_file(
+                reports_dir / "image_edit_error.json",
+                {
+                    "schema_version": "1.0",
+                    "stage": "image_edit",
+                    "status": "failed",
+                    "created_at": now_utc(),
+                    "provider": image_edit_provider,
+                    "errors": [{"message": str(exc)}],
+                },
+            )
+            publish_pipeline_status(job_id, "image_edit", "failed", 0)
+            publish_pipeline_log(job_id, f"[image] failed: {exc}")
+            raise
         output_path = job_dir / edit_result["relative_output"]
         export_dir = resolve_media_export_directory(output_root, requested_output_directory)
         export_path = export_image_result(output_path, export_dir, job_id)
@@ -4265,6 +4415,254 @@ def detect_media_type(filename: str, content_type: str, content: bytes) -> str:
     if b"ftyp" in content[:16]:
         return "video"
     return "unknown"
+
+
+def edit_image_with_provider(
+    input_path: Path,
+    renders_dir: Path,
+    prompt: str,
+    resolution: str,
+    provider: str,
+    automatic1111_endpoint: str,
+    comfyui_endpoint: str,
+    openai_image_model: str,
+    online_fallback_policy: str,
+) -> dict:
+    if provider == "pillow" or (provider == "auto" and not prompt_needs_generative_image_model(prompt)):
+        result = edit_image_locally(input_path, renders_dir, prompt, resolution)
+        result["provider"] = "pillow"
+        return result
+
+    errors: list[str] = []
+    if provider in {"auto", "local_a1111"}:
+        try:
+            return edit_image_with_automatic1111(input_path, renders_dir, prompt, automatic1111_endpoint)
+        except Exception as exc:
+            errors.append(f"Automatic1111 unavailable: {exc}")
+            if provider == "local_a1111":
+                raise ValueError(build_generative_image_error(errors)) from exc
+
+    if provider == "local_comfyui":
+        errors.append(comfyui_readiness_message(comfyui_endpoint))
+        raise ValueError(build_generative_image_error(errors))
+
+    if provider == "auto":
+        errors.append(comfyui_readiness_message(comfyui_endpoint))
+
+    if provider in {"auto", "openai"}:
+        if online_fallback_policy == "disabled" and provider == "auto":
+            errors.append("Online fallback is disabled in settings.")
+        else:
+            try:
+                return edit_image_with_openai(input_path, renders_dir, prompt, openai_image_model)
+            except Exception as exc:
+                errors.append(f"OpenAI Images API unavailable: {exc}")
+                if provider == "openai":
+                    raise ValueError(build_generative_image_error(errors)) from exc
+
+    raise ValueError(build_generative_image_error(errors))
+
+
+def prompt_needs_generative_image_model(prompt: str) -> bool:
+    text = prompt.lower()
+    generative_tokens = [
+        "貓變狗",
+        "變成狗",
+        "變成貓",
+        "替換",
+        "換成",
+        "改成",
+        "生成",
+        "inpaint",
+        "replace",
+        "turn into",
+        "make it a",
+        "cat to dog",
+        "dog",
+    ]
+    return any(token in text for token in generative_tokens)
+
+
+def comfyui_readiness_message(endpoint: str) -> str:
+    try:
+        info = http_json("GET", f"{endpoint.rstrip('/')}/object_info", timeout=5)
+    except Exception as exc:
+        return f"ComfyUI unavailable: {exc}"
+    loader = info.get("CheckpointLoaderSimple", {})
+    choices = (
+        loader.get("input", {})
+        .get("required", {})
+        .get("ckpt_name", [])
+    )
+    checkpoints: list[str] = []
+    if choices and isinstance(choices[0], list):
+        checkpoints = [str(item) for item in choices[0] if item]
+    if not checkpoints:
+        return "ComfyUI is running, but no checkpoint model is installed or visible to CheckpointLoaderSimple."
+    return "ComfyUI is running, but Dump2Done needs a saved image-to-image workflow JSON before it can submit jobs."
+
+
+def build_generative_image_error(errors: list[str]) -> str:
+    details = "；".join(errors) if errors else "No generative image provider is configured."
+    return (
+        "這個提示需要生成式圖片模型，Pillow 無法把貓變成狗。"
+        f"{details} 請啟動 Automatic1111 WebUI 並加上 --api，或設定 OPENAI_API_KEY 後選 OpenAI Images API。"
+    )
+
+
+def edit_image_with_automatic1111(input_path: Path, renders_dir: Path, prompt: str, endpoint: str) -> dict:
+    created_at = now_utc()
+    health_url = f"{endpoint.rstrip('/')}/sdapi/v1/options"
+    http_json("GET", health_url, timeout=3)
+    image_b64 = base64.b64encode(input_path.read_bytes()).decode("ascii")
+    width, height = image_size_for_generation(input_path)
+    payload = {
+        "init_images": [image_b64],
+        "prompt": normalize_image_prompt(prompt),
+        "negative_prompt": "low quality, blurry, distorted, deformed, extra limbs, text, watermark",
+        "denoising_strength": 0.82,
+        "steps": 24,
+        "cfg_scale": 7,
+        "width": width,
+        "height": height,
+        "sampler_name": "DPM++ 2M Karras",
+    }
+    response = http_json("POST", f"{endpoint.rstrip('/')}/sdapi/v1/img2img", payload, timeout=240)
+    images = response.get("images") or []
+    if not images:
+        raise RuntimeError("A1111 returned no image.")
+    output_path = renders_dir / f"edited_{input_path.stem}.png"
+    write_base64_image(images[0], output_path)
+    return {
+        "schema_version": "1.0",
+        "stage": "image_edit",
+        "status": "completed",
+        "created_at": created_at,
+        "prompt": prompt,
+        "provider": "automatic1111",
+        "operations": ["stable_diffusion_img2img"],
+        "message": "已透過本地 Automatic1111 / Stable Diffusion 完成生成式圖片編輯。",
+        "relative_output": str(output_path.parent.name + "/" + output_path.name).replace("\\", "/"),
+    }
+
+
+def edit_image_with_openai(input_path: Path, renders_dir: Path, prompt: str, model: str) -> dict:
+    api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError("OPENAI_API_KEY is not set.")
+    created_at = now_utc()
+    boundary = f"----Dump2Done{uuid.uuid4().hex}"
+    output_path = renders_dir / f"edited_{input_path.stem}.png"
+    fields = {
+        "model": model or DASHBOARD_DEFAULT_SETTINGS["openaiImageModel"],
+        "prompt": prompt or "Edit the image according to the user's request.",
+        "size": "auto",
+    }
+    body = build_multipart_body(boundary, fields, "image", input_path, "image/png")
+    request = urllib_request.Request(
+        "https://api.openai.com/v1/images/edits",
+        data=body,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+        },
+        method="POST",
+    )
+    try:
+        with urllib_request.urlopen(request, timeout=240) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except urllib_error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="ignore")
+        raise RuntimeError(f"OpenAI Images API HTTP {exc.code}: {detail[:320]}") from exc
+    image_data = (payload.get("data") or [{}])[0].get("b64_json")
+    if not image_data:
+        raise RuntimeError("OpenAI Images API returned no base64 image.")
+    write_base64_image(image_data, output_path)
+    return {
+        "schema_version": "1.0",
+        "stage": "image_edit",
+        "status": "completed",
+        "created_at": created_at,
+        "prompt": prompt,
+        "provider": "openai_images",
+        "model": fields["model"],
+        "operations": ["openai_image_edit"],
+        "message": "已透過 OpenAI Images API 完成生成式圖片編輯。",
+        "relative_output": str(output_path.parent.name + "/" + output_path.name).replace("\\", "/"),
+    }
+
+
+def normalize_image_prompt(prompt: str) -> str:
+    text = prompt.strip()
+    lowered = text.lower()
+    if ("貓" in text and "狗" in text) or "cat to dog" in lowered:
+        return (
+            "Transform the cat into a realistic dog while preserving the same photo composition, "
+            "camera angle, lighting, background, and overall natural snapshot style."
+        )
+    return text or "Edit the image naturally while preserving composition and background."
+
+
+def image_size_for_generation(path: Path, max_side: int = 768) -> tuple[int, int]:
+    try:
+        from PIL import Image
+
+        with Image.open(path) as image:
+            width, height = image.size
+    except Exception:
+        return 768, 768
+    scale = min(1.0, max_side / max(width, height))
+    width = max(64, int(width * scale))
+    height = max(64, int(height * scale))
+    width = max(64, round(width / 64) * 64)
+    height = max(64, round(height / 64) * 64)
+    return width, height
+
+
+def write_base64_image(value: str, output_path: Path) -> None:
+    if "," in value and value.strip().startswith("data:"):
+        value = value.split(",", 1)[1]
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_bytes(base64.b64decode(value))
+
+
+def http_json(method: str, url: str, payload: dict | None = None, timeout: int = 30) -> dict:
+    data = None
+    headers = {"Accept": "application/json"}
+    if payload is not None:
+        data = json.dumps(payload).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    request = urllib_request.Request(url, data=data, headers=headers, method=method)
+    try:
+        with urllib_request.urlopen(request, timeout=timeout) as response:
+            body = response.read().decode("utf-8")
+    except urllib_error.URLError as exc:
+        raise RuntimeError(str(exc.reason if hasattr(exc, "reason") else exc)) from exc
+    return json.loads(body or "{}")
+
+
+def build_multipart_body(boundary: str, fields: dict[str, str], file_field: str, file_path: Path, mime_type: str) -> bytes:
+    chunks: list[bytes] = []
+    for name, value in fields.items():
+        chunks.extend(
+            [
+                f"--{boundary}\r\n".encode("utf-8"),
+                f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode("utf-8"),
+                str(value).encode("utf-8"),
+                b"\r\n",
+            ]
+        )
+    chunks.extend(
+        [
+            f"--{boundary}\r\n".encode("utf-8"),
+            f'Content-Disposition: form-data; name="{file_field}"; filename="{file_path.name}"\r\n'.encode("utf-8"),
+            f"Content-Type: {mime_type}\r\n\r\n".encode("utf-8"),
+            file_path.read_bytes(),
+            b"\r\n",
+            f"--{boundary}--\r\n".encode("utf-8"),
+        ]
+    )
+    return b"".join(chunks)
 
 
 def edit_image_locally(input_path: Path, renders_dir: Path, prompt: str, resolution: str) -> dict:
@@ -4383,6 +4781,23 @@ def load_dashboard_settings(output_root: Path) -> dict:
         {"local_pillow_mvp", "onnx_directml_future", "qnn_future", "online_video_edit_placeholder"},
         "local_pillow_mvp",
     )
+    settings["imageEditProvider"] = coerce_choice(
+        settings.get("imageEditProvider"),
+        {"auto", "pillow", "local_a1111", "local_comfyui", "openai"},
+        "auto",
+    )
+    settings["automatic1111Endpoint"] = coerce_endpoint(
+        settings.get("automatic1111Endpoint"),
+        DASHBOARD_DEFAULT_SETTINGS["automatic1111Endpoint"],
+    )
+    settings["comfyuiEndpoint"] = coerce_endpoint(
+        settings.get("comfyuiEndpoint"),
+        DASHBOARD_DEFAULT_SETTINGS["comfyuiEndpoint"],
+    )
+    settings["openaiImageModel"] = coerce_short_text(
+        settings.get("openaiImageModel"),
+        DASHBOARD_DEFAULT_SETTINGS["openaiImageModel"],
+    )
     settings["asrProvider"] = coerce_choice(
         settings.get("asrProvider"),
         {"faster_whisper_cpu_demo", "onnx_asr_future", "online_asr_placeholder"},
@@ -4421,6 +4836,23 @@ def save_dashboard_settings(output_root: Path, payload: dict) -> dict:
         {"local_pillow_mvp", "onnx_directml_future", "qnn_future", "online_video_edit_placeholder"},
         "local_pillow_mvp",
     )
+    settings["imageEditProvider"] = coerce_choice(
+        payload.get("imageEditProvider"),
+        {"auto", "pillow", "local_a1111", "local_comfyui", "openai"},
+        "auto",
+    )
+    settings["automatic1111Endpoint"] = coerce_endpoint(
+        payload.get("automatic1111Endpoint"),
+        DASHBOARD_DEFAULT_SETTINGS["automatic1111Endpoint"],
+    )
+    settings["comfyuiEndpoint"] = coerce_endpoint(
+        payload.get("comfyuiEndpoint"),
+        DASHBOARD_DEFAULT_SETTINGS["comfyuiEndpoint"],
+    )
+    settings["openaiImageModel"] = coerce_short_text(
+        payload.get("openaiImageModel"),
+        DASHBOARD_DEFAULT_SETTINGS["openaiImageModel"],
+    )
     settings["asrProvider"] = coerce_choice(
         payload.get("asrProvider"),
         {"faster_whisper_cpu_demo", "onnx_asr_future", "online_asr_placeholder"},
@@ -4445,6 +4877,13 @@ def coerce_short_text(value: object, default: str, limit: int = 180) -> str:
     if not text:
         return default
     return text[:limit]
+
+
+def coerce_endpoint(value: object, default: str) -> str:
+    text = coerce_short_text(value, default, 240).rstrip("/")
+    if not re.match(r"^https?://", text):
+        return default.rstrip("/")
+    return text
 
 
 def image_resolution(path: Path) -> str:
