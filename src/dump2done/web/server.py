@@ -727,7 +727,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
           </label>
           <label class="grid gap-2">
             <span class="text-sm font-bold text-slate-300" data-i18n="editPrompt">編輯描述</span>
-            <textarea id="mediaPrompt" name="prompt" rows="7" class="resize-none rounded-lg border border-white/10 bg-black/30 px-3 py-3 text-sm leading-6 text-slate-100 outline-none focus:border-sky-300/70" placeholder="描述想做的圖片編輯，例如：往左旋轉90度、變亮一點、轉成黑白、銳化。" data-i18n-placeholder="imagePromptPlaceholder"></textarea>
+            <textarea id="mediaPrompt" name="prompt" rows="7" class="resize-none rounded-lg border border-white/10 bg-black/30 px-3 py-3 text-sm leading-6 text-slate-100 outline-none focus:border-sky-300/70" placeholder="先描述你想完成的結果。選擇圖片會進入圖片編輯；選擇影片會啟動影片 runner。" data-i18n-placeholder="genericPromptPlaceholder"></textarea>
           </label>
           <div id="imageOptions" class="hidden grid gap-3 rounded-xl border border-lime-300/20 bg-lime-300/[0.04] p-3">
             <div class="flex items-start gap-3">
@@ -757,8 +757,8 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
             <div class="flex items-start gap-3">
               <i data-lucide="scan-search" class="mt-0.5 h-5 w-5 text-sky-300"></i>
               <div>
-                <p class="text-sm font-black text-slate-200" data-i18n="adaptiveOptionsTitle">選檔後顯示適用設定</p>
-                <p class="mt-1 text-xs leading-5 text-slate-500" data-i18n="adaptiveOptionsHelp">圖片會進入圖片編輯模式；影片才會顯示 Profile、模型與解析度設定。</p>
+                <p id="adaptiveOptionsTitle" class="text-sm font-black text-slate-200" data-i18n="adaptiveOptionsTitle">先選擇媒體，系統會切換工作流</p>
+                <p id="adaptiveOptionsHelp" class="mt-1 text-xs leading-5 text-slate-500" data-i18n="adaptiveOptionsHelp">圖片會直接做本地圖片編輯並輸出；影片會啟動本地 video runner；音訊支援會在後續接 ASR/轉錄流程。</p>
               </div>
             </div>
           </div>
@@ -1030,8 +1030,8 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         autoDetectHint: "系統會自動判斷 image / video",
         editPrompt: "編輯描述",
         imagePromptPlaceholder: "描述想做的圖片編輯，例如：往左旋轉90度、變亮一點、轉成黑白、銳化。",
-        videoPromptPlaceholder: "描述影片剪輯需求，例如：找出最精彩的30秒、加字幕、裁成直式短影音。",
-        genericPromptPlaceholder: "描述想做的編輯。選擇檔案後會自動切換圖片或影片模式。",
+        videoPromptPlaceholder: "描述影片編輯需求，例如：把衣服換成白色、轉成直式、保留原音訊。",
+        genericPromptPlaceholder: "先描述你想完成的結果。選擇圖片會進入圖片編輯；選擇影片會啟動影片 runner。",
         imageMode: "圖片模式",
         imageModeHelp: "不需要 Profile 或解析度選單。上傳圖片、輸入指令，完成後會匯出 PNG 並在下方顯示完整路徑。",
         outputFolder: "輸出資料夾",
@@ -1079,8 +1079,12 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         processing: "上傳並處理中...",
         imageReadyHint: "圖片會立即以本地 Pillow 編輯並匯出到指定資料夾。",
         videoReadyHint: "影片會啟動本地編輯 runner，完成後自動回到畫廊。",
-        adaptiveOptionsTitle: "選檔後顯示適用設定",
-        adaptiveOptionsHelp: "圖片會進入圖片編輯模式；影片才會顯示 Profile、模型與解析度設定。",
+        adaptiveOptionsTitle: "先選擇媒體，系統會切換工作流",
+        adaptiveOptionsHelp: "圖片會直接做本地圖片編輯並輸出；影片會啟動本地 video runner；音訊支援會在後續接 ASR/轉錄流程。",
+        imageWorkflowTitle: "圖片工作流",
+        imageWorkflowHelp: "圖片會使用本地 Pillow 編輯，適合旋轉、變亮、黑白、銳化等快速輸出，不需要 Profile 或解析度選單。",
+        videoWorkflowTitle: "影片工作流",
+        videoWorkflowHelp: "影片會啟動本地 video runner，先做 FFmpeg 分析、逐幀處理與 MP4 輸出。較複雜的生成式改衣服未來會接 segmentation/tracking 或線上 fallback。",
         videoProfile: "影片 Profile",
         autoDetect: "Auto Detect",
         imageEdit: "Image Edit",
@@ -1136,8 +1140,8 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         autoDetectHint: "The system will detect image / video automatically",
         editPrompt: "Edit prompt",
         imagePromptPlaceholder: "Describe the image edit, e.g. rotate left 90 degrees, brighten, grayscale, sharpen.",
-        videoPromptPlaceholder: "Describe the video edit, e.g. find the best 30 seconds, add captions, make a vertical short.",
-        genericPromptPlaceholder: "Describe the edit. The editor will switch modes after you choose a file.",
+        videoPromptPlaceholder: "Describe the video edit, e.g. change clothing to white, make it vertical, keep original audio.",
+        genericPromptPlaceholder: "Describe the result you want. Images use image edit mode; videos start the video runner.",
         imageMode: "Image Mode",
         imageModeHelp: "No profile or resolution menu is needed. Upload an image, enter a prompt, and the PNG output path will appear below.",
         outputFolder: "Output Folder",
@@ -1185,8 +1189,12 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         processing: "Uploading and processing...",
         imageReadyHint: "Images are edited locally with Pillow and exported to the selected folder.",
         videoReadyHint: "Videos start the local edit runner and return to the gallery when finished.",
-        adaptiveOptionsTitle: "Settings appear after file detection",
-        adaptiveOptionsHelp: "Images enter image edit mode. Videos show profile, model, and resolution settings.",
+        adaptiveOptionsTitle: "Choose media first; the workflow will adapt",
+        adaptiveOptionsHelp: "Images are edited locally and exported. Videos start the local video runner. Audio will later route into ASR/transcription.",
+        imageWorkflowTitle: "Image Workflow",
+        imageWorkflowHelp: "Images use local Pillow editing for rotation, brightness, grayscale, sharpening, and fast export. No profile or resolution menu is needed.",
+        videoWorkflowTitle: "Video Workflow",
+        videoWorkflowHelp: "Videos start the local video runner: FFmpeg analysis, frame processing, and MP4 output. Higher-quality generative clothing edits will later use segmentation/tracking or online fallback.",
         videoProfile: "Video Profile",
         autoDetect: "Auto Detect",
         imageEdit: "Image Edit",
@@ -1242,8 +1250,8 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         autoDetectHint: "画像 / 動画を自動判定します",
         editPrompt: "編集プロンプト",
         imagePromptPlaceholder: "画像編集を入力します。例：左に90度回転、明るくする、白黒化、シャープ化。",
-        videoPromptPlaceholder: "動画編集を入力します。例：最高の30秒を探す、字幕を追加、縦型ショートにする。",
-        genericPromptPlaceholder: "編集内容を入力してください。ファイル選択後にモードを自動切替します。",
+        videoPromptPlaceholder: "動画編集を入力します。例：服を白にする、縦型にする、元音声を保持する。",
+        genericPromptPlaceholder: "完成したい結果を入力してください。画像は画像編集、動画は video runner に切り替わります。",
         imageMode: "画像モード",
         imageModeHelp: "Profile や解像度メニューは不要です。画像と指示を入力すると PNG を出力し、下にパスを表示します。",
         outputFolder: "出力フォルダー",
@@ -1291,8 +1299,12 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         processing: "アップロードして処理中...",
         imageReadyHint: "画像は Pillow でローカル編集され、指定フォルダーへ出力されます。",
         videoReadyHint: "動画はローカル編集 runner で処理され、完了後ギャラリーに表示されます。",
-        adaptiveOptionsTitle: "ファイル判定後に設定を表示",
-        adaptiveOptionsHelp: "画像は画像編集モードへ。動画の場合のみ Profile、モデル、解像度設定を表示します。",
+        adaptiveOptionsTitle: "先にメディアを選ぶと処理フローが切り替わります",
+        adaptiveOptionsHelp: "画像はローカル編集して出力します。動画は local video runner を開始します。音声は今後 ASR/文字起こしへ接続します。",
+        imageWorkflowTitle: "画像ワークフロー",
+        imageWorkflowHelp: "画像は Pillow によるローカル編集で、回転、明るさ、白黒、シャープ化などをすばやく出力します。Profile や解像度メニューは不要です。",
+        videoWorkflowTitle: "動画ワークフロー",
+        videoWorkflowHelp: "動画は local video runner で FFmpeg 解析、フレーム処理、MP4 出力を行います。高品質な生成式衣服編集は将来 segmentation/tracking または online fallback に接続します。",
         videoProfile: "動画 Profile",
         autoDetect: "自動判定",
         imageEdit: "画像編集",
@@ -1512,6 +1524,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       renderLog();
       applyLanguage();
       applySettingsToUi();
+      updateEditorMode(currentMediaType);
       lucide.createIcons();
     }
 
@@ -1852,19 +1865,25 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       currentMediaType = mediaType;
       const submit = document.getElementById("mediaSubmit");
       const hint = document.getElementById("formHint");
+      const adaptiveTitle = document.getElementById("adaptiveOptionsTitle");
+      const adaptiveHelp = document.getElementById("adaptiveOptionsHelp");
       if (mediaType === "image") {
         imageOptions.classList.remove("hidden");
-        adaptiveOptions.classList.add("hidden");
+        adaptiveOptions.classList.remove("hidden");
         videoOptions.classList.add("hidden");
         submit.innerHTML = `<i data-lucide="sparkles" class="h-5 w-5"></i>${escapeHtml(t("createImage"))}`;
         mediaPrompt.placeholder = t("imagePromptPlaceholder");
+        if (adaptiveTitle) adaptiveTitle.textContent = t("imageWorkflowTitle");
+        if (adaptiveHelp) adaptiveHelp.textContent = t("imageWorkflowHelp");
         hint.textContent = t("imageReadyHint");
       } else if (mediaType === "video") {
         imageOptions.classList.add("hidden");
-        adaptiveOptions.classList.add("hidden");
+        adaptiveOptions.classList.remove("hidden");
         videoOptions.classList.remove("hidden");
         submit.innerHTML = `<i data-lucide="sparkles" class="h-5 w-5"></i>${escapeHtml(t("createVideo"))}`;
         mediaPrompt.placeholder = t("videoPromptPlaceholder");
+        if (adaptiveTitle) adaptiveTitle.textContent = t("videoWorkflowTitle");
+        if (adaptiveHelp) adaptiveHelp.textContent = t("videoWorkflowHelp");
         hint.textContent = t("videoReadyHint");
       } else {
         imageOptions.classList.add("hidden");
@@ -1872,6 +1891,8 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         videoOptions.classList.add("hidden");
         submit.innerHTML = `<i data-lucide="sparkles" class="h-5 w-5"></i>${escapeHtml(t("createEdit"))}`;
         mediaPrompt.placeholder = t("genericPromptPlaceholder");
+        if (adaptiveTitle) adaptiveTitle.textContent = t("adaptiveOptionsTitle");
+        if (adaptiveHelp) adaptiveHelp.textContent = t("adaptiveOptionsHelp");
         hint.textContent = "";
       }
       lucide.createIcons();
