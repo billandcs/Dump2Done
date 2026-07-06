@@ -1260,8 +1260,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
             <div><dt class="font-bold text-slate-500">${escapeHtml(t("created"))}</dt><dd>${escapeHtml(item.createdAt)}</dd></div>
             <div><dt class="font-bold text-slate-500">${escapeHtml(t("resolution"))}</dt><dd>${escapeHtml(item.resolution)}</dd></div>
           </dl>
-          <div class="${compact ? "mt-3" : "mt-4"} grid grid-cols-3 gap-2">
-            ${primaryArtifactAction(item)}
+          <div class="${compact ? "mt-3" : "mt-4"} grid grid-cols-2 gap-2">
             <button class="rounded-lg border border-lime-300/30 px-3 py-2 text-xs font-black text-lime-100 hover:bg-lime-300/10" onclick="openFolderById('${escapeAttr(item.id)}')"><i data-lucide="folder-open" class="mr-1 inline h-3 w-3"></i>${escapeHtml(t("openFolder"))}</button>
             <button class="rounded-lg border border-red-300/30 px-3 py-2 text-xs font-black text-red-100 hover:bg-red-300/10" onclick="requestDeleteArtifact('${escapeAttr(item.id)}')"><i data-lucide="trash-2" class="mr-1 inline h-3 w-3"></i>${escapeHtml(t("deleteArtifact"))}</button>
           </div>
@@ -1708,15 +1707,6 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
           <span class="absolute bottom-3 left-3 rounded-md bg-black/70 px-2 py-1 text-xs font-black text-white">${duration}</span>
         </button>
       `;
-    }
-
-    function primaryArtifactAction(item) {
-      if (item.kind === "video" || item.kind === "audio" || item.kind === "image") {
-        const icon = item.kind === "audio" ? "volume-2" : item.kind === "image" ? "image" : "play";
-        const label = item.kind === "audio" ? t("playAudio") : item.kind === "image" ? t("previewImage") : t("playVideo");
-        return `<button class="rounded-lg border border-sky-300/30 px-3 py-2 text-xs font-black text-sky-100 hover:bg-sky-300/10" onclick="playArtifactById('${escapeAttr(item.id)}')"><i data-lucide="${icon}" class="mr-1 inline h-3 w-3"></i>${escapeHtml(label)}</button>`;
-      }
-      return `<button disabled class="cursor-not-allowed rounded-lg border border-white/10 px-3 py-2 text-xs font-black text-slate-500"><i data-lucide="ban" class="mr-1 inline h-3 w-3"></i>${escapeHtml(t("unavailablePreview"))}</button>`;
     }
 
     function playArtifactById(artifactId) {
