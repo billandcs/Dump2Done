@@ -609,7 +609,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
             <p class="text-xs font-black uppercase tracking-[0.22em] text-lime-300">Artifacts</p>
             <h2 class="mt-2 text-xl font-black">產出物歷史畫廊</h2>
           </div>
-          <span class="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs font-bold text-slate-300">MP4 / WAV / JSON artifacts</span>
+          <span class="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs font-bold text-slate-300">圖片 / 影片 / 聲音</span>
         </div>
         <div id="gallery" class="grid gap-4 md:grid-cols-2 xl:grid-cols-3"></div>
       </article>
@@ -747,7 +747,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
               <i data-lucide="archive-x" class="mt-1 h-6 w-6 text-orange-300"></i>
               <div>
                 <h3 class="font-black">目前沒有可操作的真實產出物</h3>
-                <p class="mt-2 text-sm leading-6 text-slate-400">跑完 analyze / transcribe / select-clips 後，這裡會顯示實際存在於 output/jobs 的 MP4、WAV、JSON artifacts。Render 階段完成後才會出現最終短影片 MP4。</p>
+                <p class="mt-2 text-sm leading-6 text-slate-400">這裡只顯示真正產出的圖片、影片或聲音檔。JSON 報告與原始上傳素材會留在 job 資料夾內供除錯，不放進畫廊。</p>
               </div>
             </div>
           </div>
@@ -2173,7 +2173,7 @@ def gallery_for_frontend(output_root: Path) -> list[dict]:
     gallery = []
     if not output_root.exists():
         return gallery
-    allowed_suffixes = {".mp4", ".mov", ".mkv", ".wav", ".json", ".png", ".jpg", ".jpeg", ".webp", ".bmp"}
+    allowed_suffixes = {".mp4", ".mov", ".mkv", ".wav", ".png", ".jpg", ".jpeg", ".webp", ".bmp"}
     for job_dir in sorted(output_root.iterdir(), key=lambda path: path.stat().st_mtime, reverse=True):
         if not job_dir.is_dir():
             continue
@@ -2184,12 +2184,25 @@ def gallery_for_frontend(output_root: Path) -> list[dict]:
         paths = [
             path
             for path in job_dir.rglob("*")
-            if path.is_file() and path.suffix.lower() in allowed_suffixes
+            if path.is_file()
+            and path.suffix.lower() in allowed_suffixes
+            and is_gallery_output_path(job_dir, path)
         ]
         paths.sort(key=artifact_sort_key)
         for artifact_path in paths[:18]:
             gallery.append(artifact_card_for_frontend(output_root, job_dir, job_id, artifact_path, video_info, audio_info, len(gallery)))
     return gallery[:36]
+
+
+def is_gallery_output_path(job_dir: Path, path: Path) -> bool:
+    try:
+        parts = path.relative_to(job_dir).parts
+    except ValueError:
+        return False
+    if not parts:
+        return False
+    output_roots = {"renders", "audio", "exports"}
+    return parts[0].lower() in output_roots
 
 
 def artifact_sort_key(path: Path) -> tuple[int, float]:
@@ -2205,8 +2218,6 @@ def artifact_sort_key(path: Path) -> tuple[int, float]:
         priority = 1
     elif "/audio/" in relative and path.suffix.lower() == ".wav":
         priority = 2
-    elif path.suffix.lower() == ".json":
-        priority = 3
     return priority, -path.stat().st_mtime
 
 
@@ -2441,7 +2452,6 @@ def create_media_job(output_root: Path, payload: dict) -> dict:
         manifest["stages"] = {"upload": "completed"}
         write_json_file(job_dir / "job_manifest.json", manifest)
         command = f'python main.py run-all --config {profile} --input "{input_path}" --job-id {job_id}'
-        gallery_items.append(artifact_card_for_frontend(output_root, job_dir, job_id, input_path, {}, {}, 0))
         message = "影片已上傳並建立 pipeline job。"
         publish_pipeline_log(job_id, f"[video] Uploaded {filename}; next command: {command}")
 
