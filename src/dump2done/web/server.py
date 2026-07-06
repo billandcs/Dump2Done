@@ -2998,7 +2998,6 @@ def render_env_dashboard(report: dict) -> str:
           <div class="flex items-start gap-4">
             <div class="rounded-xl bg-orange-400 p-3 text-black"><i data-lucide="triangle-alert" class="h-6 w-6"></i></div>
             <div>
-              <p class="text-sm font-semibold uppercase tracking-wide text-orange-200">Critical Performance Warning</p>
               <h2 class="mt-1 text-2xl font-bold text-orange-50">目前在 Qualcomm ARM64 平台上模擬運行 x64 Python</h2>
               <p class="mt-2 max-w-4xl text-sm leading-6 text-orange-100">
                 這會讓 ASR、OpenCV、ONNX Runtime、模型載入與影片處理承受明顯效能瓶頸。建議改用 native ARM64 Python、
@@ -3020,7 +3019,7 @@ def render_env_dashboard(report: dict) -> str:
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Dump2Done Environment Executive Summary</title>
+  <title>Dump2Done 環境診斷</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
   <script>
@@ -3044,14 +3043,7 @@ def render_env_dashboard(report: dict) -> str:
   <main class="mx-auto max-w-7xl px-5 py-6 lg:px-8">
     <header class="mb-6 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
       <div>
-        <div class="mb-3 inline-flex items-center gap-2 rounded-full border border-sky-300/25 bg-sky-300/10 px-3 py-1 text-xs font-semibold text-sky-100">
-          <i data-lucide="clipboard-check" class="h-4 w-4"></i>
-          Executive Summary
-        </div>
-        <h1 class="text-3xl font-black tracking-tight md:text-5xl">Environment Executive Summary</h1>
-        <p class="mt-2 max-w-3xl text-sm leading-6 text-slate-400">
-          只保留會影響 Dump2Done 本地部署與下一步施工判斷的重點；可變動的即時數字不再放第一屏干擾判斷。
-        </p>
+        <h1 class="text-3xl font-black tracking-tight md:text-5xl">環境診斷</h1>
       </div>
       <div class="flex flex-wrap gap-2">
         <a href="/" class="rounded-xl border border-slate-700 bg-panel2 px-4 py-2 text-sm font-bold text-slate-200 hover:border-sky-400">Back to Dashboard</a>
@@ -3070,25 +3062,10 @@ def render_env_dashboard(report: dict) -> str:
     <section class="mt-5 rounded-2xl border border-slate-800 bg-panel/70 p-4">
       <details>
         <summary class="cursor-pointer text-sm font-bold text-slate-400 hover:text-slate-200">
-          工程細節：依賴元件與原始 JSON
+          細節
         </summary>
         <div class="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">__SOFTWARE_CARDS__</div>
-        <p class="mt-4 text-xs leading-5 text-slate-500">上方已整理成決策摘要；以下資訊只在安裝或除錯時需要看。</p>
-        <a href="/env?format=json" class="mt-3 inline-flex rounded-lg border border-slate-700 px-3 py-2 text-xs font-bold text-slate-300 hover:border-lime-300/40 hover:text-lime-200">Open raw JSON</a>
-      </details>
-    </section>
-
-    <section class="mt-4 rounded-2xl border border-slate-800 bg-panel/50 p-4">
-      <details>
-        <summary class="cursor-pointer text-sm font-bold text-slate-400 hover:text-slate-200">
-          已從主畫面移除的項目
-        </summary>
-        <ul class="mt-3 grid gap-2 text-xs leading-5 text-slate-500">
-          <li>Memory/Disk 即時數字：變化小、解釋成本高，除非要做壓力監控，否則不該佔第一屏。</li>
-          <li>重新掃描按鈕：目前只是整頁重載，沒有足夠回饋感，先移除。</li>
-          <li>Readiness Tier 大卡：Q1 這種代碼對使用者不直覺，改由摘要文字與施工清單取代。</li>
-          <li>CPU/AI runtime 細項：保留在 JSON/依賴折疊區，避免首頁像硬體報表。</li>
-        </ul>
+        <a href="/env?format=json" class="mt-4 inline-flex rounded-lg border border-slate-700 px-3 py-2 text-xs font-bold text-slate-300 hover:border-lime-300/40 hover:text-lime-200">JSON</a>
       </details>
     </section>
   </main>
@@ -3113,15 +3090,12 @@ def render_env_dashboard(report: dict) -> str:
 
 def env_executive_summary(report: dict) -> str:
     basic = report.get("basic", {})
-    compute = report.get("compute", {})
     qualcomm = report.get("qualcomm_platform", {})
     ffmpeg = report.get("ffmpeg_codecs", {})
     image = report.get("image_edit", {})
     asr = report.get("asr", {})
     llm = report.get("llm", {})
     hardware = report.get("hardware_level", {})
-    memory = compute.get("memory", {})
-    disk = compute.get("disk", {})
 
     emulated = bool(qualcomm.get("likely_emulated_python"))
     local_items = local_deployment_items(report)
@@ -3135,8 +3109,6 @@ def env_executive_summary(report: dict) -> str:
     ai_state_parts.append("ASR 已就緒" if asr.get("faster_whisper_installed") else "ASR 未完成")
     ai_state_parts.append("LLM 已連線" if llm.get("ollama_api", {}).get("available") else "LLM 未連線")
     ai_state = "、".join(ai_state_parts)
-    resource_note = f"背景資訊：記憶體 {memory.get('percent_used', 'unknown')}% 使用中；工作區剩餘 {disk.get('cwd_free_gb', 'unknown')} GB。這些數字只做參考，不作為主要決策。"
-
     cards = [
         executive_card(
             "平台判斷",
@@ -3171,13 +3143,6 @@ def env_executive_summary(report: dict) -> str:
 
     return f"""
     <section class="mt-5 rounded-2xl border border-slate-800 bg-panel/95 p-5 shadow-xl">
-      <div class="mb-4 flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
-        <div>
-          <p class="text-xs font-bold uppercase tracking-wide text-sky-300">Executive Summary</p>
-          <h2 class="mt-1 text-2xl font-black">現在真正該看的結論</h2>
-        </div>
-        <p class="max-w-xl text-xs leading-5 text-slate-500">{html.escape(resource_note)}</p>
-      </div>
       <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-4">{cards_html}</div>
     </section>
     """
@@ -3291,9 +3256,6 @@ def readiness_card(title: str, readiness: dict, blockers: list, icon: str, tone:
 def env_priority_section(report: dict) -> str:
     qualcomm = report.get("qualcomm_platform", {})
     basic = report.get("basic", {})
-    compute = report.get("compute", {})
-    disk = compute.get("disk", {})
-    memory = compute.get("memory", {})
     ffmpeg = report.get("ffmpeg_codecs", {})
     asr = report.get("asr", {})
     llm = report.get("llm", {})
@@ -3309,38 +3271,25 @@ def env_priority_section(report: dict) -> str:
         )
     priorities.append(
         (
-            "ok" if basic.get("ffmpeg", {}).get("available") else "critical",
-            "確認 FFmpeg 本地渲染",
-            "影片輸出與音訊合成都依賴 FFmpeg；目前本機 runner 以 FFmpeg + libx264 作為穩定輸出路線。",
+            "ok" if basic.get("ffmpeg", {}).get("available") and ffmpeg.get("cpu_encoding_available") else "critical",
+            "保留 CPU FFmpeg 輸出路線",
+            "目前 Qualcomm 本機先以 FFmpeg + libx264 驗證穩定輸出，避免把 CUDA/NVENC 當成本機前提。",
         )
     )
-    priorities.append(
-        (
-            "ok" if (memory.get("total_gb") or 0) >= 16 else "warn",
-            "記憶體與磁碟餘量",
-            f"即時記憶體使用率 {memory.get('percent_used', 'unknown')}%；工作區剩餘 {disk.get('cwd_free_gb', 'unknown')} GB。長影片處理會大量使用暫存與 cache。",
+    if not asr.get("faster_whisper_installed"):
+        priorities.append(
+            (
+                "warn",
+                "補齊本地 ASR",
+                "Faster-Whisper 會影響未來語音轉錄與剪輯理解；未完成時仍可跑基本圖片/影片輸出。",
+            )
         )
-    )
-    priorities.append(
-        (
-            "ok" if asr.get("faster_whisper_installed") else "warn",
-            "本地語音辨識",
-            "Faster-Whisper 是未來影片轉錄與剪輯理解的本地 ASR 基礎；尚未安裝時影片仍可做基本影像 runner，但不能做語音理解。",
-        )
-    )
-    priorities.append(
-        (
-            "ok" if llm.get("ollama_api", {}).get("available") else "future",
-            "本地 LLM / 任務規劃",
-            "Ollama 或相容端點未來負責 prompt 解析、剪輯計畫與 Agent 任務拆解。目前未連通不會阻塞基本圖片/影片輸出。",
-        )
-    )
-    if not ffmpeg.get("gpu_encoding_available"):
+    if not llm.get("ollama_api", {}).get("available"):
         priorities.append(
             (
                 "future",
-                "硬體編碼不是首要阻塞",
-                "這台 Qualcomm 本機先用 CPU libx264 驗證功能；QNN/DirectML/Media Foundation 加速應排在功能穩定後。",
+                "接上本地 LLM",
+                "Ollama 或相容端點會負責 prompt 解析、剪輯計畫與 Agent 任務拆解。",
             )
         )
 
@@ -3349,8 +3298,7 @@ def env_priority_section(report: dict) -> str:
     <article class="rounded-2xl border border-slate-800 bg-panel/95 p-5 shadow-xl">
       <div class="mb-4 flex items-start justify-between gap-3">
         <div>
-          <p class="text-xs font-bold uppercase tracking-wide text-orange-300">Priority</p>
-          <h2 class="mt-1 text-xl font-black">真正重要，優先處理</h2>
+          <h2 class="text-xl font-black">優先處理</h2>
         </div>
         <i data-lucide="list-checks" class="h-6 w-6 text-orange-300"></i>
       </div>
@@ -3387,11 +3335,9 @@ def local_deployment_section(report: dict) -> str:
     <article class="rounded-2xl border border-slate-800 bg-panel/95 p-5 shadow-xl">
       <div class="mb-4 flex items-start justify-between gap-3">
         <div>
-          <p class="text-xs font-bold uppercase tracking-wide text-lime-300">Local Deployment</p>
-          <h2 class="mt-1 text-xl font-black">本地可部署能力清單</h2>
-          <p class="mt-1 text-xs leading-5 text-slate-500">列出 Dump2Done 未來可以在這台機器本地化的能力，並標記目前完成度。</p>
+          <h2 class="text-xl font-black">本地能力</h2>
         </div>
-        <span class="rounded-xl border border-lime-300/25 bg-lime-300/10 px-3 py-2 text-xs font-black text-lime-200">{complete}/{len(items)} complete</span>
+        <span class="rounded-xl border border-lime-300/25 bg-lime-300/10 px-3 py-2 text-xs font-black text-lime-200">{complete}/{len(items)}</span>
       </div>
       <div class="grid gap-3 md:grid-cols-2">{rows}</div>
     </article>
