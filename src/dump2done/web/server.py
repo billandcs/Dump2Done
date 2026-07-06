@@ -1131,20 +1131,41 @@ def render_platform_summary(env: dict) -> str:
     q_ready = env.get("qualcomm_readiness", {})
     amd_ready = env.get("amd_readiness", {})
     intel_ready = env.get("intel_readiness", {})
+    n_ready = env.get("nvidia_readiness", {})
     ffmpeg = env.get("ffmpeg_codecs", {})
     rows = [
         ("Hardware", level.get("level", "unknown")),
-        ("Qualcomm", yes_no(qualcomm.get("is_qualcomm_cpu"))),
-        ("AMD", yes_no(amd.get("is_amd_cpu") or amd.get("is_amd_gpu"))),
-        ("Intel", yes_no(intel.get("is_intel_cpu") or intel.get("is_intel_gpu"))),
         ("Python", "x64 emulation" if qualcomm.get("likely_emulated_python") else "native"),
-        ("Q Readiness", q_ready.get("tier", "unknown")),
-        ("AMD Readiness", amd_ready.get("tier", "unknown")),
-        ("Intel Readiness", intel_ready.get("tier", "unknown")),
-        ("QNN EP", yes_no(qualcomm.get("qnn_execution_provider_available"))),
-        ("DirectML EP", yes_no(qualcomm.get("directml_execution_provider_available"))),
         ("Encoder", platform_encoder_summary(ffmpeg)),
     ]
+    hardware_level = level.get("level")
+    if hardware_level == "Q":
+        rows[1:1] = [
+            ("Qualcomm", yes_no(qualcomm.get("is_qualcomm_cpu"))),
+            ("Q Readiness", q_ready.get("tier", "unknown")),
+            ("QNN EP", yes_no(qualcomm.get("qnn_execution_provider_available"))),
+            ("DirectML EP", yes_no(qualcomm.get("directml_execution_provider_available"))),
+        ]
+    elif hardware_level == "AM":
+        rows[1:1] = [
+            ("AMD", yes_no(amd.get("is_amd_cpu") or amd.get("is_amd_gpu"))),
+            ("AMD Readiness", amd_ready.get("tier", "unknown")),
+            ("DirectML EP", yes_no(amd.get("directml_execution_provider_available"))),
+            ("ROCm EP", yes_no(amd.get("rocm_execution_provider_available"))),
+        ]
+    elif hardware_level == "I":
+        rows[1:1] = [
+            ("Intel", yes_no(intel.get("is_intel_cpu") or intel.get("is_intel_gpu"))),
+            ("Intel Readiness", intel_ready.get("tier", "unknown")),
+            ("OpenVINO", yes_no(intel.get("openvino_execution_provider_available"))),
+            ("DirectML EP", yes_no(intel.get("directml_execution_provider_available"))),
+        ]
+    elif hardware_level in {"A", "B", "C"}:
+        rows[1:1] = [
+            ("NVIDIA Readiness", n_ready.get("tier", "unknown")),
+            ("CUDA", yes_no(env.get("gpu_cuda", {}).get("cuda_usable"))),
+            ("NVENC", yes_no(ffmpeg.get("platform_encoders", {}).get("nvidia_nvenc_usable"))),
+        ]
     return '<div class="facts">' + "\n".join(render_fact(name, value) for name, value in rows) + "</div>"
 
 
@@ -1398,7 +1419,7 @@ def render_env_dashboard(report: dict) -> str:
         </div>
         <h1 class="text-3xl font-black tracking-tight md:text-5xl">Platform Environment Report</h1>
         <p class="mt-2 max-w-3xl text-sm leading-6 text-slate-400">
-          即時診斷 Dump2Done 本地硬體、AI runtime、依賴元件與 Qualcomm / AMD / Intel / NVIDIA readiness。
+          即時診斷 Dump2Done 本地硬體、AI runtime、依賴元件與目前平台 readiness。
         </p>
       </div>
       <div class="flex flex-wrap gap-2">
@@ -1416,12 +1437,7 @@ def render_env_dashboard(report: dict) -> str:
       __PYTHON_CARD__
     </section>
 
-    <section class="mt-5 grid gap-5 lg:grid-cols-2">
-      __NVIDIA_CARD__
-      __QUALCOMM_CARD__
-      __AMD_CARD__
-      __INTEL_CARD__
-    </section>
+    __ACTIVE_READINESS_SECTION__
 
     <section class="mt-5 rounded-2xl border border-slate-800 bg-panel/95 p-5 shadow-xl">
       <div class="mb-4 flex items-center justify-between gap-3">
@@ -1453,10 +1469,7 @@ def render_env_dashboard(report: dict) -> str:
         "__MEMORY_CARD__": progress_card("Memory Used", f"{memory_used:.0f}%", memory_used, "memory-stick", "lime" if memory_used < 70 else "orange"),
         "__DISK_CARD__": progress_card("Workspace Disk Used", f"{disk_used:.0f}%", disk_used, "hard-drive", "lime" if disk_used < 75 else "orange", f"{disk_free:.1f} GB free"),
         "__PYTHON_CARD__": env_summary_card("Python Runtime", basic.get("python", {}).get("version", "unknown"), "x64 emulation likely" if emulated else "native or non-ARM path", "terminal", "orange" if emulated else "lime"),
-        "__NVIDIA_CARD__": readiness_card("NVIDIA Readiness", n_ready, nvidia_blockers(report), "gpu", "sky"),
-        "__QUALCOMM_CARD__": readiness_card("Qualcomm Readiness", q_ready, q_ready.get("blockers", []), "cpu", "lime"),
-        "__AMD_CARD__": readiness_card("AMD Readiness", amd_ready, amd_ready.get("blockers", []), "circuit-board", "red"),
-        "__INTEL_CARD__": readiness_card("Intel Readiness", intel_ready, intel_ready.get("blockers", []), "microchip", "orange"),
+        "__ACTIVE_READINESS_SECTION__": active_readiness_section(report),
         "__SOFTWARE_CARDS__": software_cards,
         "__CPU_CARD__": detail_card("CPU / OS", "cpu", [
             ("CPU", compute.get("cpu", {}).get("model", "unknown")),
@@ -1470,9 +1483,7 @@ def render_env_dashboard(report: dict) -> str:
             ("Local models", ", ".join(llm.get("ollama_api", {}).get("models", [])) or "none"),
         ]),
         "__RECOMMEND_CARD__": detail_card("Optimization Notes", "wrench", [
-            ("Profile", qualcomm.get("recommended_local_profile", "default")),
-            ("AMD Profile", amd.get("recommended_local_profile", "default")),
-            ("Intel Profile", intel.get("recommended_local_profile", "default")),
+            ("Profile", active_platform_profile(report)),
             ("Encoder", platform_encoder_summary(ffmpeg)),
             ("Next", "native ARM64 Python + ONNX Runtime QNN/DirectML validation" if emulated else "ASR and clip pipeline profiling"),
         ]),
@@ -1571,6 +1582,66 @@ def readiness_card(title: str, readiness: dict, blockers: list, icon: str, tone:
     """
 
 
+def active_readiness_section(report: dict) -> str:
+    level = report.get("hardware_level", {}).get("level")
+    if level == "Q":
+        cards = [
+            readiness_card(
+                "Qualcomm Readiness",
+                report.get("qualcomm_readiness", {}),
+                report.get("qualcomm_readiness", {}).get("blockers", []),
+                "cpu",
+                "lime",
+            )
+        ]
+    elif level == "AM":
+        cards = [
+            readiness_card(
+                "AMD Readiness",
+                report.get("amd_readiness", {}),
+                report.get("amd_readiness", {}).get("blockers", []),
+                "circuit-board",
+                "red",
+            )
+        ]
+    elif level == "I":
+        cards = [
+            readiness_card(
+                "Intel Readiness",
+                report.get("intel_readiness", {}),
+                report.get("intel_readiness", {}).get("blockers", []),
+                "microchip",
+                "orange",
+            )
+        ]
+    elif level in {"A", "B", "C"}:
+        cards = [
+            readiness_card(
+                "NVIDIA Readiness",
+                report.get("nvidia_readiness", {}),
+                nvidia_blockers(report),
+                "gpu",
+                "sky",
+            )
+        ]
+    else:
+        cards = [
+            readiness_card(
+                "CPU Baseline Readiness",
+                {
+                    "tier": "CPU",
+                    "score": 0,
+                    "meaning": "No platform accelerator was selected. Use CPU int8 ASR and CPU FFmpeg baseline.",
+                },
+                [],
+                "cpu",
+                "lime",
+            )
+        ]
+
+    return '<section class="mt-5 grid gap-5 lg:grid-cols-1">' + "\n".join(cards) + "</section>"
+
+
 def dependency_card(name: str, detail: object, available: object, icon: str) -> str:
     state = "ok" if available else "missing"
     color = "bg-lime-400" if available else "bg-red-400"
@@ -1640,6 +1711,17 @@ def platform_encoder_summary(ffmpeg: dict) -> str:
     if usable:
         return ", ".join(usable)
     return "CPU libx264/libx265"
+
+
+def active_platform_profile(report: dict) -> str:
+    level = report.get("hardware_level", {}).get("level")
+    if level == "Q":
+        return report.get("qualcomm_platform", {}).get("recommended_local_profile", "default")
+    if level == "AM":
+        return report.get("amd_platform", {}).get("recommended_local_profile", "default")
+    if level == "I":
+        return report.get("intel_platform", {}).get("recommended_local_profile", "default")
+    return "default"
 
 
 def tone_palette(tone: str) -> dict[str, str]:
