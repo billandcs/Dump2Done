@@ -612,14 +612,21 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
               <button class="prompt-chip rounded-lg border border-lime-300/25 bg-lime-300/10 px-3 py-2 text-xs font-black text-lime-100 hover:bg-lime-300/20" type="button" data-prompt="轉成黑白">黑白</button>
             </div>
           </div>
-          <div id="videoOptions" class="grid gap-3">
+          <div id="adaptiveOptions" class="grid gap-2 rounded-xl border border-white/10 bg-white/[0.03] p-3">
+            <div class="flex items-start gap-3">
+              <i data-lucide="scan-search" class="mt-0.5 h-5 w-5 text-sky-300"></i>
+              <div>
+                <p class="text-sm font-black text-slate-200" data-i18n="adaptiveOptionsTitle">選檔後顯示適用設定</p>
+                <p class="mt-1 text-xs leading-5 text-slate-500" data-i18n="adaptiveOptionsHelp">圖片會進入圖片編輯模式；影片才會顯示 Profile、模型與解析度設定。</p>
+              </div>
+            </div>
+          </div>
+          <div id="videoOptions" class="hidden grid gap-3 rounded-xl border border-sky-300/15 bg-sky-300/[0.04] p-3">
             <label class="grid gap-2">
-              <span class="text-sm font-bold text-slate-300">Profile</span>
+              <span class="text-sm font-bold text-slate-300" data-i18n="videoProfile">影片 Profile</span>
               <select name="profile" class="h-11 rounded-lg border border-white/10 bg-black/40 px-3 text-sm text-slate-100 outline-none focus:border-sky-300/70">
                 <option value="configs/default.yaml">default.yaml</option>
                 <option value="configs/qualcomm_windows_arm64.yaml" selected>qualcomm_windows_arm64.yaml</option>
-                <option value="configs/amd_windows_directml.yaml">amd_windows_directml.yaml</option>
-                <option value="configs/intel_windows_openvino.yaml">intel_windows_openvino.yaml</option>
               </select>
             </label>
             <div class="grid grid-cols-2 gap-3">
@@ -854,6 +861,9 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         processing: "上傳並處理中...",
         imageReadyHint: "圖片會立即以本地 Pillow 編輯並匯出到指定資料夾。",
         videoReadyHint: "影片會建立 pipeline job，輸出會進入工作佇列。",
+        adaptiveOptionsTitle: "選檔後顯示適用設定",
+        adaptiveOptionsHelp: "圖片會進入圖片編輯模式；影片才會顯示 Profile、模型與解析度設定。",
+        videoProfile: "影片 Profile",
         autoDetect: "Auto Detect",
         imageEdit: "Image Edit",
         videoPipeline: "Video Pipeline",
@@ -934,6 +944,9 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         processing: "Uploading and processing...",
         imageReadyHint: "Images are edited locally with Pillow and exported to the selected folder.",
         videoReadyHint: "Videos create a pipeline job and enter the queue.",
+        adaptiveOptionsTitle: "Settings appear after file detection",
+        adaptiveOptionsHelp: "Images enter image edit mode. Videos show profile, model, and resolution settings.",
+        videoProfile: "Video Profile",
         autoDetect: "Auto Detect",
         imageEdit: "Image Edit",
         videoPipeline: "Video Pipeline",
@@ -1014,6 +1027,9 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         processing: "アップロードして処理中...",
         imageReadyHint: "画像は Pillow でローカル編集され、指定フォルダーへ出力されます。",
         videoReadyHint: "動画は pipeline ジョブとしてキューに追加されます。",
+        adaptiveOptionsTitle: "ファイル判定後に設定を表示",
+        adaptiveOptionsHelp: "画像は画像編集モードへ。動画の場合のみ Profile、モデル、解像度設定を表示します。",
+        videoProfile: "動画 Profile",
         autoDetect: "自動判定",
         imageEdit: "画像編集",
         videoPipeline: "動画 Pipeline",
@@ -1348,6 +1364,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
     const dropZone = document.getElementById("dropZone");
     const mediaPrompt = document.getElementById("mediaPrompt");
     const imageOptions = document.getElementById("imageOptions");
+    const adaptiveOptions = document.getElementById("adaptiveOptions");
     const videoOptions = document.getElementById("videoOptions");
     const mediaResult = document.getElementById("mediaResult");
     const mediaResultPath = document.getElementById("mediaResultPath");
@@ -1482,19 +1499,22 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       const hint = document.getElementById("formHint");
       if (mediaType === "image") {
         imageOptions.classList.remove("hidden");
+        adaptiveOptions.classList.add("hidden");
         videoOptions.classList.add("hidden");
         submit.innerHTML = `<i data-lucide="sparkles" class="h-5 w-5"></i>${escapeHtml(t("createImage"))}`;
         mediaPrompt.placeholder = t("imagePromptPlaceholder");
         hint.textContent = t("imageReadyHint");
       } else if (mediaType === "video") {
         imageOptions.classList.add("hidden");
+        adaptiveOptions.classList.add("hidden");
         videoOptions.classList.remove("hidden");
         submit.innerHTML = `<i data-lucide="sparkles" class="h-5 w-5"></i>${escapeHtml(t("createVideo"))}`;
         mediaPrompt.placeholder = t("videoPromptPlaceholder");
         hint.textContent = t("videoReadyHint");
       } else {
         imageOptions.classList.add("hidden");
-        videoOptions.classList.remove("hidden");
+        adaptiveOptions.classList.remove("hidden");
+        videoOptions.classList.add("hidden");
         submit.innerHTML = `<i data-lucide="sparkles" class="h-5 w-5"></i>${escapeHtml(t("createEdit"))}`;
         mediaPrompt.placeholder = t("genericPromptPlaceholder");
         hint.textContent = "";
