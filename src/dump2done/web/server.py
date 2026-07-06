@@ -497,12 +497,23 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
           <span id="mediaTypePill" class="rounded-lg border border-lime-300/30 bg-lime-300/10 px-3 py-1 text-xs font-black text-lime-200">Auto Detect</span>
         </div>
         <form id="mediaForm" class="grid gap-4">
-          <label id="dropZone" class="grid min-h-44 cursor-pointer place-items-center rounded-xl border border-dashed border-white/15 bg-black/25 p-4 text-center hover:border-sky-300/50">
+          <label id="dropZone" class="grid min-h-44 cursor-pointer place-items-center overflow-hidden rounded-xl border border-dashed border-white/15 bg-black/25 p-4 text-center hover:border-sky-300/50">
             <input id="mediaFile" name="mediaFile" type="file" accept="image/*,video/*" class="hidden" required>
-            <span class="grid gap-2">
+            <span id="mediaEmptyState" class="grid gap-2">
               <i data-lucide="upload-cloud" class="mx-auto h-8 w-8 text-sky-300"></i>
-              <strong id="mediaFileName" class="text-sm">上傳想要編輯的圖片或影片</strong>
-              <span id="mediaFileHint" class="text-xs text-slate-500">系統會自動判斷 image / video</span>
+              <strong class="text-sm">上傳想要編輯的圖片或影片</strong>
+              <span class="text-xs text-slate-500">系統會自動判斷 image / video</span>
+            </span>
+            <span id="mediaPreviewState" class="hidden w-full grid gap-3">
+              <span class="relative overflow-hidden rounded-lg border border-white/10 bg-black/40">
+                <img id="uploadImagePreview" class="hidden h-44 w-full object-contain" alt="Selected image preview">
+                <video id="uploadVideoPreview" class="hidden h-44 w-full object-contain" muted playsinline controls></video>
+                <span class="absolute left-2 top-2 rounded-md bg-black/70 px-2 py-1 text-[11px] font-black text-lime-200">Preview</span>
+              </span>
+              <span class="grid gap-1">
+                <strong id="mediaFileName" class="truncate text-sm">上傳想要編輯的圖片或影片</strong>
+                <span id="mediaFileHint" class="text-xs text-slate-500">系統會自動判斷 image / video</span>
+              </span>
             </span>
           </label>
           <label class="grid gap-2">
@@ -610,6 +621,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
     let gallery = [...INITIAL_GALLERY];
     let activeJobId = SELECTED_JOB_ID || (jobs[0] && jobs[0].id);
     let eventSource = null;
+    let uploadPreviewUrl = null;
     const logLines = [
       "[dashboard] Booted Dump2Done local control plane on http://127.0.0.1:8765/",
       "[runner] Qualcomm profile loaded: CPU int8, single worker, ffmpeg libx264",
@@ -781,21 +793,58 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       renderLog();
     });
     const mediaFileInput = document.getElementById("mediaFile");
+    const dropZone = document.getElementById("dropZone");
+    dropZone.addEventListener("dragover", event => {
+      event.preventDefault();
+      dropZone.classList.add("border-sky-300/70", "bg-sky-300/10");
+    });
+    dropZone.addEventListener("dragleave", () => {
+      dropZone.classList.remove("border-sky-300/70", "bg-sky-300/10");
+    });
+    dropZone.addEventListener("drop", event => {
+      event.preventDefault();
+      dropZone.classList.remove("border-sky-300/70", "bg-sky-300/10");
+      const file = event.dataTransfer && event.dataTransfer.files && event.dataTransfer.files[0];
+      if (!file) return;
+      const transfer = new DataTransfer();
+      transfer.items.add(file);
+      mediaFileInput.files = transfer.files;
+      mediaFileInput.dispatchEvent(new Event("change"));
+    });
     mediaFileInput.addEventListener("change", () => {
       const file = mediaFileInput.files && mediaFileInput.files[0];
       const pill = document.getElementById("mediaTypePill");
       const name = document.getElementById("mediaFileName");
       const hint = document.getElementById("mediaFileHint");
+      const emptyState = document.getElementById("mediaEmptyState");
+      const previewState = document.getElementById("mediaPreviewState");
+      const imagePreview = document.getElementById("uploadImagePreview");
+      const videoPreview = document.getElementById("uploadVideoPreview");
+      clearUploadPreview();
       if (!file) {
         pill.textContent = "Auto Detect";
         name.textContent = "上傳想要編輯的圖片或影片";
         hint.textContent = "系統會自動判斷 image / video";
+        emptyState.classList.remove("hidden");
+        previewState.classList.add("hidden");
         return;
       }
       const detected = detectClientMediaType(file);
       pill.textContent = detected === "image" ? "Image Edit" : detected === "video" ? "Video Pipeline" : "Unknown";
       name.textContent = file.name;
       hint.textContent = `${file.type || "unknown"} · ${formatBytes(file.size)}`;
+      uploadPreviewUrl = URL.createObjectURL(file);
+      emptyState.classList.add("hidden");
+      previewState.classList.remove("hidden");
+      imagePreview.classList.add("hidden");
+      videoPreview.classList.add("hidden");
+      if (detected === "image") {
+        imagePreview.src = uploadPreviewUrl;
+        imagePreview.classList.remove("hidden");
+      } else if (detected === "video") {
+        videoPreview.src = uploadPreviewUrl;
+        videoPreview.classList.remove("hidden");
+      }
     });
 
     document.getElementById("mediaForm").addEventListener("submit", async event => {
@@ -872,6 +921,18 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       if (bytes < 1024) return `${bytes} B`;
       if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
       return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+    }
+
+    function clearUploadPreview() {
+      const imagePreview = document.getElementById("uploadImagePreview");
+      const videoPreview = document.getElementById("uploadVideoPreview");
+      if (uploadPreviewUrl) {
+        URL.revokeObjectURL(uploadPreviewUrl);
+        uploadPreviewUrl = null;
+      }
+      imagePreview.removeAttribute("src");
+      videoPreview.pause();
+      videoPreview.removeAttribute("src");
     }
 
     async function openFolderById(artifactId) {
