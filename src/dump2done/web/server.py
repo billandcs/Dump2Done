@@ -4,6 +4,9 @@ import argparse
 import html
 import json
 import mimetypes
+import os
+import uuid
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
@@ -52,6 +55,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
             query = parse_qs(parsed.query)
             self._send_html(render_index(self.output_root, query.get("job", [None])[0]))
             return
+        if parsed.path == "/api/jobs":
+            self._send_json({"jobs": jobs_for_frontend(self.output_root)})
+            return
         if parsed.path == "/artifact":
             query = parse_qs(parsed.query)
             job_id = query.get("job", [""])[0]
@@ -77,6 +83,30 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
         self.send_error(404, "Not found")
 
+    def do_POST(self) -> None:  # noqa: N802 - stdlib handler API
+        parsed = urlparse(self.path)
+        if parsed.path == "/api/jobs":
+            try:
+                payload = self._read_json_body()
+                response = create_preview_job(self.output_root, payload)
+                self._send_json(response, status=201)
+            except ValueError as exc:
+                self._send_json({"status": "error", "message": str(exc)}, status=400)
+            except Exception as exc:
+                self._send_json({"status": "error", "message": str(exc)}, status=500)
+            return
+        if parsed.path == "/api/open-folder":
+            try:
+                payload = self._read_json_body()
+                response = open_folder_request(self.output_root, payload)
+                self._send_json(response)
+            except ValueError as exc:
+                self._send_json({"status": "error", "message": str(exc)}, status=400)
+            except Exception as exc:
+                self._send_json({"status": "error", "message": str(exc)}, status=500)
+            return
+        self.send_error(404, "Not found")
+
     def log_message(self, format: str, *args: object) -> None:
         print(f"[dashboard] {self.address_string()} - {format % args}")
 
@@ -88,13 +118,23 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(payload)
 
-    def _send_json(self, payload: dict) -> None:
+    def _send_json(self, payload: dict, status: int = 200) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        self.send_response(200)
+        self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def _read_json_body(self) -> dict:
+        length = int(self.headers.get("Content-Length") or 0)
+        if length <= 0:
+            return {}
+        raw = self.rfile.read(length).decode("utf-8")
+        data = json.loads(raw)
+        if not isinstance(data, dict):
+            raise ValueError("Expected JSON object.")
+        return data
 
     def _send_file(self, output_root: Path, job_id: str, media_path: str) -> None:
         target = resolve_job_path(output_root, job_id, media_path)
@@ -112,64 +152,395 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
 
 def render_index(output_root: Path, selected_job_id: str | None) -> str:
-    jobs = list_jobs(output_root)
-    env = read_json_or_none(output_root.parent / "env_report.json") or {}
-    selected = select_job(jobs, selected_job_id)
+    return render_job_control_dashboard(output_root, selected_job_id)
 
-    if selected:
-        workspace = render_workspace(selected, env)
-    else:
-        workspace = render_empty_workspace(env)
 
-    job_rows = "\n".join(render_job_row(job, selected) for job in jobs)
-    if not job_rows:
-        job_rows = '<div class="empty-line">目前沒有 job。</div>'
+def render_job_control_dashboard(output_root: Path, selected_job_id: str | None) -> str:
+    initial_jobs = jobs_for_frontend(output_root)
+    initial_gallery = gallery_for_frontend(output_root)
+    selected_id = selected_job_id or (initial_jobs[0]["id"] if initial_jobs else "")
+    template = r"""<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dump2Done Job Control Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            carbon: "#05070a",
+            panel: "#0b1016",
+            line: "rgba(148, 163, 184, 0.18)"
+          },
+          boxShadow: {
+            glow: "0 0 40px rgba(56, 189, 248, 0.14)"
+          }
+        }
+      }
+    };
+  </script>
+</head>
+<body class="min-h-screen bg-carbon text-slate-100 antialiased">
+  <div class="fixed inset-0 -z-10 bg-[radial-gradient(circle_at_18%_12%,rgba(56,189,248,0.16),transparent_30%),radial-gradient(circle_at_82%_0%,rgba(132,204,22,0.13),transparent_28%),linear-gradient(180deg,#05070a,#080b10_38%,#05070a)]"></div>
 
-    return page(
-        "Dump2Done Dashboard",
-        f"""
-        <aside class="sidebar">
-          <a class="brand" href="/">
-            <span class="brand-mark" aria-label="Dump2Done logo">
-              <span class="mark-play"></span>
-              <span class="mark-stack"></span>
-            </span>
-            <span>Dump2Done</span>
-          </a>
-          <nav class="nav">
-            <a class="active" href="/">Pipeline</a>
-            <a href="#jobs">Jobs</a>
-            <a href="/env">Platform</a>
-            <a href="https://github.com/billandcs/Dump2Done">GitHub</a>
-          </nav>
-          <div class="side-note">
-            <span>Local</span>
-            <strong>{tooltip(platform_badge(env))}</strong>
+  <header class="sticky top-0 z-30 border-b border-white/10 bg-carbon/82 backdrop-blur-xl">
+    <div class="mx-auto flex max-w-[1500px] items-center justify-between gap-4 px-5 py-4 lg:px-8">
+      <a href="/" class="flex items-center gap-3">
+        <span class="relative grid h-11 w-11 place-items-center rounded-xl border border-sky-300/30 bg-sky-400/10 shadow-glow">
+          <span class="absolute h-6 w-6 rotate-45 rounded-sm border-r-4 border-t-4 border-lime-300"></span>
+          <span class="absolute ml-1 h-5 w-5 rounded-sm border-b-4 border-l-4 border-sky-300"></span>
+        </span>
+        <span>
+          <span class="block text-xl font-black tracking-normal">Dump2Done</span>
+          <span class="flex items-center gap-2 text-xs font-semibold text-lime-300"><span class="h-2 w-2 rounded-full bg-lime-300"></span>Local Control Plane</span>
+        </span>
+      </a>
+      <nav class="flex items-center gap-2">
+        <a href="/" class="inline-flex items-center gap-2 rounded-lg border border-sky-300/35 bg-sky-400/12 px-4 py-2 text-sm font-bold text-sky-100">
+          <i data-lucide="layout-dashboard" class="h-4 w-4"></i>控制台
+        </a>
+        <a href="/env" class="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-4 py-2 text-sm font-bold text-slate-200 hover:border-lime-300/40 hover:text-lime-200">
+          <i data-lucide="activity" class="h-4 w-4"></i>環境診斷
+        </a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="mx-auto grid max-w-[1500px] gap-5 px-5 py-6 lg:grid-cols-[390px_minmax(0,1fr)] lg:px-8">
+    <section class="space-y-5">
+      <article class="rounded-xl border border-white/10 bg-panel/92 p-5 shadow-glow">
+        <div class="mb-5 flex items-start justify-between gap-3">
+          <div>
+            <p class="text-xs font-black uppercase tracking-[0.22em] text-orange-300">New Job</p>
+            <h1 class="mt-2 text-2xl font-black">新增剪輯任務</h1>
           </div>
-        </aside>
-        <div class="shell">
-          <header class="topbar">
-            <div>
-              <p class="eyebrow">本地 AI 影片後製平台</p>
-              <h1>Dump2Done 工作台</h1>
-            </div>
-            <div class="top-actions">
-              <a class="pill" href="/env">{tooltip(platform_badge(env))}</a>
-              <a class="pill muted-pill" href="/health">Health</a>
-            </div>
-          </header>
-          {workspace}
-          <section class="jobs" id="jobs">
-            <div class="section-head">
-              <div>
-                <p class="eyebrow">Jobs</p>
-                <h2>處理紀錄</h2>
-              </div>
-            </div>
-            <div class="job-list">{job_rows}</div>
-          </section>
+          <span class="rounded-lg border border-lime-300/30 bg-lime-300/10 px-3 py-1 text-xs font-black text-lime-200">Qualcomm Ready</span>
         </div>
-        """,
+        <form id="jobForm" class="grid gap-4">
+          <label class="grid gap-2">
+            <span class="text-sm font-bold text-slate-300">原始影片路徑</span>
+            <input name="videoPath" required value="C:\Users\subil\Videos\raw-demo.mp4" class="h-11 rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-slate-100 outline-none focus:border-sky-300/70" placeholder="C:\path\to\video.mp4">
+          </label>
+          <label class="grid gap-2">
+            <span class="text-sm font-bold text-slate-300">輸出資料夾</span>
+            <input name="outputDirectory" value="output\jobs" class="h-11 rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-slate-100 outline-none focus:border-sky-300/70" placeholder="output\jobs">
+          </label>
+          <label class="grid gap-2">
+            <span class="text-sm font-bold text-slate-300">Profile</span>
+            <select name="profile" class="h-11 rounded-lg border border-white/10 bg-black/40 px-3 text-sm text-slate-100 outline-none focus:border-sky-300/70">
+              <option value="configs/default.yaml">default.yaml</option>
+              <option value="configs/qualcomm_windows_arm64.yaml" selected>qualcomm_windows_arm64.yaml</option>
+            </select>
+          </label>
+          <button class="mt-2 inline-flex h-12 items-center justify-center gap-2 rounded-lg bg-lime-300 px-4 text-sm font-black text-slate-950 hover:bg-lime-200" type="submit">
+            <i data-lucide="rocket" class="h-5 w-5"></i>開始 AI 自動剪輯
+          </button>
+          <p id="formHint" class="min-h-5 text-xs font-semibold text-slate-400"></p>
+        </form>
+      </article>
+
+      <article class="rounded-xl border border-white/10 bg-panel/92 p-5">
+        <div class="mb-4 flex items-center justify-between">
+          <h2 class="text-lg font-black">任務佇列</h2>
+          <button id="refreshJobs" class="rounded-lg border border-white/10 px-3 py-2 text-xs font-black text-slate-300 hover:border-sky-300/50">Refresh</button>
+        </div>
+        <div id="jobList" class="grid gap-3"></div>
+      </article>
+    </section>
+
+    <section class="grid gap-5">
+      <article class="rounded-xl border border-white/10 bg-panel/92 p-5">
+        <div class="mb-5 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p class="text-xs font-black uppercase tracking-[0.22em] text-sky-300">Live Pipeline Tracker</p>
+            <h2 id="activeJobTitle" class="mt-2 text-2xl font-black">選擇任務</h2>
+          </div>
+          <div class="grid grid-cols-3 gap-2 text-center text-xs font-black">
+            <div class="rounded-lg border border-white/10 bg-white/5 px-3 py-2"><span id="statRunning" class="block text-lg text-sky-300">0</span>Running</div>
+            <div class="rounded-lg border border-white/10 bg-white/5 px-3 py-2"><span id="statDone" class="block text-lg text-lime-300">0</span>Done</div>
+            <div class="rounded-lg border border-white/10 bg-white/5 px-3 py-2"><span id="statQueue" class="block text-lg text-orange-300">0</span>Queue</div>
+          </div>
+        </div>
+        <div id="pipelineSteps" class="grid gap-3 lg:grid-cols-4"></div>
+      </article>
+
+      <article class="rounded-xl border border-white/10 bg-panel/92 p-5">
+        <div class="mb-4 flex items-center justify-between">
+          <div>
+            <p class="text-xs font-black uppercase tracking-[0.22em] text-lime-300">Artifacts</p>
+            <h2 class="mt-2 text-xl font-black">產出物歷史畫廊</h2>
+          </div>
+          <span class="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs font-bold text-slate-300">MP4 / JSON artifacts</span>
+        </div>
+        <div id="gallery" class="grid gap-4 md:grid-cols-2 xl:grid-cols-3"></div>
+      </article>
+
+      <article class="overflow-hidden rounded-xl border border-white/10 bg-[#050608]">
+        <div class="flex items-center justify-between border-b border-white/10 bg-white/[0.03] px-4 py-3">
+          <div class="flex items-center gap-2 text-sm font-black text-slate-300">
+            <i data-lucide="square-terminal" class="h-4 w-4 text-sky-300"></i>Live Console Log
+          </div>
+          <button id="clearLog" class="rounded-md border border-white/10 px-2 py-1 text-xs font-bold text-slate-400 hover:text-slate-100">Clear</button>
+        </div>
+        <pre id="consoleLog" class="h-64 overflow-auto p-4 font-mono text-[12px] leading-6 text-lime-100"></pre>
+      </article>
+    </section>
+  </main>
+
+  <script>
+    const INITIAL_JOBS = __INITIAL_JOBS__;
+    const INITIAL_GALLERY = __INITIAL_GALLERY__;
+    const SELECTED_JOB_ID = "__SELECTED_JOB_ID__";
+    const MOCK_JOBS = [
+      {
+        id: "creator_launch_reel",
+        status: "running",
+        profile: "qualcomm_windows_arm64.yaml",
+        videoPath: "C:\\Users\\subil\\Videos\\launch-keynote.mp4",
+        outputDirectory: "output\\jobs",
+        updatedAt: "2026-07-06T07:41:00Z",
+        phases: [
+          { key: "asr", label: "語音識別", detail: "ASR - Faster-Whisper", status: "completed", progress: 100 },
+          { key: "llm", label: "語意理解", detail: "LLM - Ollama", status: "running", progress: 63 },
+          { key: "vision", label: "智慧裁剪", detail: "Vision", status: "waiting", progress: 0 },
+          { key: "render", label: "影音渲染", detail: "FFmpeg", status: "waiting", progress: 0 }
+        ]
+      },
+      {
+        id: "podcast_highlights_042",
+        status: "completed",
+        profile: "default.yaml",
+        videoPath: "D:\\Footage\\founder-podcast.mp4",
+        outputDirectory: "output\\jobs",
+        updatedAt: "2026-07-06T06:12:00Z",
+        phases: [
+          { key: "asr", label: "語音識別", detail: "ASR - Faster-Whisper", status: "completed", progress: 100 },
+          { key: "llm", label: "語意理解", detail: "LLM - Ollama", status: "completed", progress: 100 },
+          { key: "vision", label: "智慧裁剪", detail: "Vision", status: "completed", progress: 100 },
+          { key: "render", label: "影音渲染", detail: "FFmpeg", status: "completed", progress: 100 }
+        ]
+      },
+      {
+        id: "qualcomm_smoke_preview",
+        status: "queued",
+        profile: "qualcomm_windows_arm64.yaml",
+        videoPath: "output\\smoke_input.mp4",
+        outputDirectory: "output\\jobs",
+        updatedAt: "2026-07-06T05:55:00Z",
+        phases: [
+          { key: "asr", label: "語音識別", detail: "ASR - Faster-Whisper", status: "waiting", progress: 0 },
+          { key: "llm", label: "語意理解", detail: "LLM - Ollama", status: "waiting", progress: 0 },
+          { key: "vision", label: "智慧裁剪", detail: "Vision", status: "waiting", progress: 0 },
+          { key: "render", label: "影音渲染", detail: "FFmpeg", status: "waiting", progress: 0 }
+        ]
+      }
+    ];
+    const MOCK_GALLERY = [
+      { fileName: "founder-podcast_clip_001.mp4", duration: "00:42", createdAt: "2026-07-06 14:12", resolution: "720x1280", folderPath: "output\\jobs\\podcast_highlights_042\\renders", accent: "lime" },
+      { fileName: "launch-keynote_hook_003.mp4", duration: "01:06", createdAt: "2026-07-06 15:31", resolution: "720x1280", folderPath: "output\\jobs\\creator_launch_reel\\renders", accent: "sky" },
+      { fileName: "tutorial_before_after.mp4", duration: "00:31", createdAt: "2026-07-06 11:08", resolution: "1080x1920", folderPath: "output\\jobs\\tutorial_batch\\renders", accent: "orange" }
+    ];
+
+    let jobs = [...INITIAL_JOBS, ...MOCK_JOBS];
+    let gallery = [...INITIAL_GALLERY, ...MOCK_GALLERY];
+    let activeJobId = SELECTED_JOB_ID || (jobs[0] && jobs[0].id);
+    const logLines = [
+      "[dashboard] Booted Dump2Done local control plane on http://127.0.0.1:8765/",
+      "[runner] Qualcomm profile loaded: CPU int8, single worker, ffmpeg libx264",
+      "[asr] faster-whisper model=small device=cpu compute_type=int8",
+      "[llm] Ollama structured output pending for semantic clip selection"
+    ];
+
+    const phaseIcon = { completed: "check", running: "loader-circle", waiting: "circle" };
+    const phaseTone = {
+      completed: "border-lime-300/35 bg-lime-300/10 text-lime-100",
+      running: "border-sky-300/40 bg-sky-300/10 text-sky-100",
+      waiting: "border-white/10 bg-white/[0.03] text-slate-300"
+    };
+
+    function render() {
+      renderStats();
+      renderJobs();
+      renderPipeline();
+      renderGallery();
+      renderLog();
+      lucide.createIcons();
+    }
+
+    function renderStats() {
+      document.getElementById("statRunning").textContent = jobs.filter(job => job.status === "running").length;
+      document.getElementById("statDone").textContent = jobs.filter(job => job.status === "completed").length;
+      document.getElementById("statQueue").textContent = jobs.filter(job => job.status === "queued").length;
+    }
+
+    function renderJobs() {
+      const list = document.getElementById("jobList");
+      list.innerHTML = jobs.map(job => `
+        <button data-job-id="${escapeAttr(job.id)}" class="job-pick w-full rounded-lg border ${job.id === activeJobId ? "border-sky-300/50 bg-sky-300/10" : "border-white/10 bg-white/[0.03] hover:border-white/20"} p-3 text-left">
+          <div class="flex items-center justify-between gap-3">
+            <strong class="truncate text-sm">${escapeHtml(job.id)}</strong>
+            <span class="rounded-md px-2 py-1 text-[11px] font-black ${statusBadge(job.status)}">${escapeHtml(job.status)}</span>
+          </div>
+          <p class="mt-2 truncate text-xs text-slate-400">${escapeHtml(job.videoPath || "No video path")}</p>
+          <p class="mt-1 text-xs font-bold text-slate-500">${escapeHtml(job.profile || "unknown profile")}</p>
+        </button>
+      `).join("");
+      document.querySelectorAll(".job-pick").forEach(button => {
+        button.addEventListener("click", () => {
+          activeJobId = button.dataset.jobId;
+          render();
+        });
+      });
+    }
+
+    function renderPipeline() {
+      const job = jobs.find(item => item.id === activeJobId) || jobs[0];
+      document.getElementById("activeJobTitle").textContent = job ? `${job.id} · ${job.status}` : "尚無任務";
+      const target = document.getElementById("pipelineSteps");
+      if (!job) {
+        target.innerHTML = `<p class="text-sm text-slate-400">建立第一個任務後會顯示流程。</p>`;
+        return;
+      }
+      target.innerHTML = job.phases.map((phase, index) => `
+        <div class="relative rounded-xl border ${phaseTone[phase.status]} p-4">
+          <div class="mb-4 flex items-center justify-between">
+            <span class="grid h-9 w-9 place-items-center rounded-lg bg-black/25">
+              <i data-lucide="${phaseIcon[phase.status]}" class="h-5 w-5 ${phase.status === "running" ? "animate-spin" : ""}"></i>
+            </span>
+            <span class="text-xs font-black text-slate-400">0${index + 1}</span>
+          </div>
+          <h3 class="font-black">${escapeHtml(phase.label)}</h3>
+          <p class="mt-1 text-xs font-semibold text-slate-400">${escapeHtml(phase.detail)}</p>
+          <div class="mt-4 h-2 overflow-hidden rounded-full bg-black/40">
+            <div class="h-full rounded-full ${phase.status === "completed" ? "bg-lime-300" : phase.status === "running" ? "bg-sky-300" : "bg-slate-700"}" style="width:${phase.progress}%"></div>
+          </div>
+          <p class="mt-2 text-xs font-bold text-slate-400">${phase.progress}% · ${escapeHtml(phase.status)}</p>
+        </div>
+      `).join("");
+    }
+
+    function renderGallery() {
+      const grid = document.getElementById("gallery");
+      grid.innerHTML = gallery.map(item => `
+        <article class="rounded-xl border border-white/10 bg-black/20 p-4">
+          <div class="mb-4 aspect-video rounded-lg border border-white/10 bg-gradient-to-br ${galleryGradient(item.accent)} p-3">
+            <div class="flex h-full items-end justify-between">
+              <span class="rounded-md bg-black/50 px-2 py-1 text-xs font-black text-white">${escapeHtml(item.duration)}</span>
+              <i data-lucide="film" class="h-6 w-6 text-white/80"></i>
+            </div>
+          </div>
+          <h3 class="truncate font-black">${escapeHtml(item.fileName)}</h3>
+          <dl class="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-400">
+            <div><dt class="font-bold text-slate-500">Created</dt><dd>${escapeHtml(item.createdAt)}</dd></div>
+            <div><dt class="font-bold text-slate-500">Resolution</dt><dd>${escapeHtml(item.resolution)}</dd></div>
+          </dl>
+          <div class="mt-4 grid grid-cols-2 gap-2">
+            <button class="rounded-lg border border-sky-300/30 px-3 py-2 text-xs font-black text-sky-100 hover:bg-sky-300/10" onclick="playLocal('${escapeAttr(item.fileName)}')"><i data-lucide="play" class="mr-1 inline h-3 w-3"></i>本地播放</button>
+            <button class="rounded-lg border border-lime-300/30 px-3 py-2 text-xs font-black text-lime-100 hover:bg-lime-300/10" onclick="openFolder('${escapeAttr(item.folderPath || "")}')"><i data-lucide="folder-open" class="mr-1 inline h-3 w-3"></i>開啟資料夾</button>
+          </div>
+        </article>
+      `).join("");
+    }
+
+    function renderLog() {
+      const terminal = document.getElementById("consoleLog");
+      terminal.textContent = logLines.join("\n");
+      terminal.scrollTop = terminal.scrollHeight;
+    }
+
+    async function refreshJobs() {
+      const response = await fetch("/api/jobs");
+      const payload = await response.json();
+      jobs = [...payload.jobs, ...MOCK_JOBS];
+      if (!jobs.find(job => job.id === activeJobId)) activeJobId = jobs[0] && jobs[0].id;
+      logLines.push(`[dashboard] Refreshed ${payload.jobs.length} real job(s) from output/jobs`);
+      render();
+    }
+
+    document.getElementById("refreshJobs").addEventListener("click", refreshJobs);
+    document.getElementById("clearLog").addEventListener("click", () => {
+      logLines.length = 0;
+      renderLog();
+    });
+    document.getElementById("jobForm").addEventListener("submit", async event => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      const data = Object.fromEntries(new FormData(form).entries());
+      const hint = document.getElementById("formHint");
+      hint.textContent = "送出中...";
+      try {
+        const response = await fetch("/api/jobs", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(data)
+        });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.message || "Job creation failed");
+        jobs = [payload.job, ...jobs];
+        activeJobId = payload.job.id;
+        logLines.push(`[api] Created queued job ${payload.job.id}`);
+        logLines.push(`[next] ${payload.command}`);
+        hint.textContent = "已建立預覽任務，命令已寫入 Console。";
+        render();
+      } catch (error) {
+        hint.textContent = error.message;
+        logLines.push(`[error] ${error.message}`);
+        renderLog();
+      }
+    });
+
+    async function openFolder(folderPath) {
+      logLines.push(`[folder] ${folderPath || "No folder path supplied"}`);
+      try {
+        const response = await fetch("/api/open-folder", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ path: folderPath })
+        });
+        const payload = await response.json();
+        logLines.push(`[folder] ${payload.message || payload.status}`);
+      } catch (error) {
+        logLines.push(`[folder] ${error.message}`);
+      }
+      renderLog();
+    }
+
+    function playLocal(fileName) {
+      logLines.push(`[player] Local playback placeholder for ${fileName}. Render media route will be wired after crop/render artifacts exist.`);
+      renderLog();
+    }
+
+    function statusBadge(status) {
+      if (status === "completed") return "bg-lime-300/15 text-lime-200";
+      if (status === "running") return "bg-sky-300/15 text-sky-200";
+      return "bg-orange-300/15 text-orange-200";
+    }
+
+    function galleryGradient(accent) {
+      if (accent === "lime") return "from-lime-300/35 via-slate-800 to-black";
+      if (accent === "orange") return "from-orange-300/35 via-slate-800 to-black";
+      return "from-sky-300/35 via-slate-800 to-black";
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? "").replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]));
+    }
+    function escapeAttr(value) {
+      return escapeHtml(value).replace(/`/g, "&#96;");
+    }
+
+    render();
+  </script>
+</body>
+</html>"""
+    return (
+        template.replace("__INITIAL_JOBS__", safe_script_json(initial_jobs))
+        .replace("__INITIAL_GALLERY__", safe_script_json(initial_gallery))
+        .replace("__SELECTED_JOB_ID__", html.escape(selected_id, quote=True))
     )
 
 
@@ -842,6 +1213,204 @@ def list_jobs(output_root: Path) -> list[dict]:
             }
         )
     return jobs
+
+
+def jobs_for_frontend(output_root: Path) -> list[dict]:
+    jobs = []
+    for job in list_jobs(output_root):
+        manifest = job["manifest"]
+        job_id = manifest.get("job_id", job["dir"].name)
+        config = read_json_or_none(job["dir"] / "reports/effective_config.json") or {}
+        jobs.append(
+            {
+                "id": job_id,
+                "status": frontend_job_status(manifest),
+                "profile": Path(config.get("config_path", "") or manifest.get("config", {}).get("profile", "local")).name,
+                "videoPath": manifest.get("input", {}).get("original_path")
+                or manifest.get("input", {}).get("source_path", ""),
+                "outputDirectory": str(output_root),
+                "updatedAt": manifest.get("updated_at") or manifest.get("created_at") or "",
+                "phases": frontend_phases(manifest),
+            }
+        )
+    return jobs
+
+
+def frontend_phases(manifest: dict) -> list[dict]:
+    stages = manifest.get("stages", {})
+    return [
+        {
+            "key": "asr",
+            "label": "語音識別",
+            "detail": "ASR - Faster-Whisper",
+            "status": phase_status(stages, ["transcribe", "asr"]),
+            "progress": phase_progress(stages, ["transcribe", "asr"]),
+        },
+        {
+            "key": "llm",
+            "label": "語意理解",
+            "detail": "LLM - Ollama",
+            "status": phase_status(stages, ["select_clips"]),
+            "progress": phase_progress(stages, ["select_clips"]),
+        },
+        {
+            "key": "vision",
+            "label": "智慧裁剪",
+            "detail": "Vision",
+            "status": phase_status(stages, ["crop"]),
+            "progress": phase_progress(stages, ["crop"]),
+        },
+        {
+            "key": "render",
+            "label": "影音渲染",
+            "detail": "FFmpeg",
+            "status": phase_status(stages, ["subtitle", "render"]),
+            "progress": phase_progress(stages, ["subtitle", "render"]),
+        },
+    ]
+
+
+def phase_status(stages: dict, keys: list[str]) -> str:
+    values = [stages.get(key) for key in keys]
+    if values and all(value == "completed" for value in values):
+        return "completed"
+    if any(value == "running" for value in values):
+        return "running"
+    if any(value == "completed" for value in values):
+        return "running"
+    return "waiting"
+
+
+def phase_progress(stages: dict, keys: list[str]) -> int:
+    if not keys:
+        return 0
+    completed = sum(1 for key in keys if stages.get(key) == "completed")
+    if completed == len(keys):
+        return 100
+    if any(stages.get(key) == "running" for key in keys):
+        return max(12, round((completed / len(keys)) * 100))
+    if completed:
+        return round((completed / len(keys)) * 100)
+    return 0
+
+
+def frontend_job_status(manifest: dict) -> str:
+    stages = manifest.get("stages", {})
+    if stages.get("render") == "completed":
+        return "completed"
+    if any(status == "running" for status in stages.values()):
+        return "running"
+    if any(status == "completed" for status in stages.values()):
+        return "running"
+    return "queued"
+
+
+def gallery_for_frontend(output_root: Path) -> list[dict]:
+    gallery = []
+    if not output_root.exists():
+        return gallery
+    for render_path in sorted(output_root.glob("*/renders/*.mp4"), key=lambda path: path.stat().st_mtime, reverse=True):
+        job_dir = render_path.parents[1]
+        video_info = read_json_or_none(job_dir / "reports/video_info.json") or {}
+        stat = render_path.stat()
+        gallery.append(
+            {
+                "fileName": render_path.name,
+                "duration": format_seconds(video_info.get("duration")) if video_info else "unknown",
+                "createdAt": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M"),
+                "resolution": format_resolution(video_info) if video_info else "unknown",
+                "folderPath": str(render_path.parent),
+                "accent": "lime" if len(gallery) % 3 == 0 else "sky" if len(gallery) % 3 == 1 else "orange",
+            }
+        )
+    return gallery
+
+
+def create_preview_job(output_root: Path, payload: dict) -> dict:
+    video_path = str(payload.get("videoPath") or "").strip()
+    if not video_path:
+        raise ValueError("Video File Path is required.")
+    output_directory = str(payload.get("outputDirectory") or output_root).strip() or str(output_root)
+    profile = str(payload.get("profile") or "configs/qualcomm_windows_arm64.yaml").strip()
+    allowed_profiles = {"configs/default.yaml", "configs/qualcomm_windows_arm64.yaml"}
+    if profile not in allowed_profiles:
+        raise ValueError("Unsupported profile.")
+
+    source_name = Path(video_path).stem or "job"
+    job_id = sanitize_job_id(f"{source_name}_{uuid.uuid4().hex[:6]}")
+    job_dir = output_root / job_id
+    (job_dir / "reports").mkdir(parents=True, exist_ok=True)
+    created_at = now_utc()
+    manifest = {
+        "schema_version": "1.0",
+        "job_id": job_id,
+        "status": "queued",
+        "created_at": created_at,
+        "updated_at": created_at,
+        "input": {
+            "source_path": "",
+            "original_path": video_path,
+            "original_filename": Path(video_path).name,
+        },
+        "config": {
+            "profile": Path(profile).stem,
+            "effective_config_path": "reports/effective_config.json",
+        },
+        "stages": {},
+        "errors": [],
+        "dashboard_preview": True,
+    }
+    (job_dir / "job_manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    (job_dir / "reports/effective_config.json").write_text(
+        json.dumps({"profile": profile, "output_directory": output_directory}, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    command = f'python main.py run-all --config {profile} --input "{video_path}" --job-id {job_id}'
+    return {
+        "status": "queued",
+        "command": command,
+        "job": {
+            "id": job_id,
+            "status": "queued",
+            "profile": Path(profile).name,
+            "videoPath": video_path,
+            "outputDirectory": output_directory,
+            "updatedAt": created_at,
+            "phases": frontend_phases(manifest),
+        },
+    }
+
+
+def open_folder_request(output_root: Path, payload: dict) -> dict:
+    folder = str(payload.get("path") or "").strip()
+    if not folder:
+        raise ValueError("Folder path is required.")
+    base = Path.cwd().resolve()
+    target = (base / folder).resolve() if not Path(folder).is_absolute() else Path(folder).resolve()
+    allowed_root = output_root.parent.resolve()
+    if not str(target).startswith(str(allowed_root)):
+        raise ValueError("Only folders under the local output directory can be opened.")
+    if not target.exists():
+        return {"status": "missing", "message": f"Folder does not exist yet: {target}"}
+    if not target.is_dir():
+        target = target.parent
+    if hasattr(os, "startfile"):
+        os.startfile(str(target))  # type: ignore[attr-defined]
+        return {"status": "ok", "message": f"Opened {target}"}
+    return {"status": "ok", "message": f"Folder path: {target}"}
+
+
+def sanitize_job_id(value: str) -> str:
+    safe = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in value)
+    return safe.strip("_") or f"job_{uuid.uuid4().hex[:6]}"
+
+
+def now_utc() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def safe_script_json(value: object) -> str:
+    return json.dumps(value, ensure_ascii=False).replace("</", "<\\/")
 
 
 def select_job(jobs: list[dict], selected_job_id: str | None) -> dict | None:
