@@ -3331,13 +3331,15 @@ def local_deployment_section(report: dict) -> str:
     items = local_deployment_items(report)
     rows = "\n".join(local_deployment_row(item) for item in items)
     complete = sum(1 for item in items if item["state"] == "complete")
+    mvp = sum(1 for item in items if item["state"] == "mvp")
+    badge_text = f"{complete} 完成" + (f" · {mvp} MVP" if mvp else "")
     return f"""
     <article class="rounded-2xl border border-slate-800 bg-panel/95 p-5 shadow-xl">
       <div class="mb-4 flex items-start justify-between gap-3">
         <div>
           <h2 class="text-xl font-black">本地能力</h2>
         </div>
-        <span class="rounded-xl border border-lime-300/25 bg-lime-300/10 px-3 py-2 text-xs font-black text-lime-200">{complete}/{len(items)}</span>
+        <span class="rounded-xl border border-lime-300/25 bg-lime-300/10 px-3 py-2 text-xs font-black text-lime-200">{badge_text}</span>
       </div>
       <div class="grid gap-3 md:grid-cols-2">{rows}</div>
     </article>
@@ -3379,18 +3381,24 @@ def local_deployment_items(report: dict) -> list[dict[str, str]]:
         },
         {
             "name": "QNN / NPU 加速",
-            "state": "future" if qualcomm.get("is_qualcomm_cpu") else "blocked",
-            "detail": "偵測到 Qualcomm 平台，未來可評估 ONNX Runtime QNNExecutionProvider。" if qualcomm.get("is_qualcomm_cpu") else "非 Qualcomm 平台時不適用。",
+            "state": "complete" if qualcomm.get("qnn_execution_provider_available") else "setup" if qualcomm.get("is_qualcomm_cpu") else "blocked",
+            "detail": "QNNExecutionProvider 已可用，可接 ONNX 化模型驗證 NPU 路線。"
+            if qualcomm.get("qnn_execution_provider_available")
+            else "尚未偵測到 QNNExecutionProvider；需安裝/驗證 Qualcomm QNN SDK 與支援 QNN 的 ONNX Runtime。"
+            if qualcomm.get("is_qualcomm_cpu")
+            else "非 Qualcomm 平台時不適用。",
         },
         {
             "name": "DirectML 視覺模型",
-            "state": "complete" if qualcomm.get("directml_execution_provider_available") else "future",
-            "detail": "DirectML provider 可用。" if qualcomm.get("directml_execution_provider_available") else "未來可用於本地 segmentation/tracking fallback。",
+            "state": "complete" if qualcomm.get("directml_execution_provider_available") else "setup",
+            "detail": "DmlExecutionProvider 已可用，可作為 ONNX segmentation/tracking 的 Windows GPU fallback。"
+            if qualcomm.get("directml_execution_provider_available")
+            else "尚未偵測到 DmlExecutionProvider；需安裝 onnxruntime-directml 並用小型 ONNX vision model 驗證。",
         },
         {
             "name": "人物/衣服追蹤",
-            "state": "future",
-            "detail": "目前是中央區域 deterministic MVP；真正衣服 segmentation + tracking 尚未完成。",
+            "state": "mvp",
+            "detail": "已支援中央區域 deterministic 衣服變白 MVP；精準 segmentation + tracking 尚待接入。",
         },
     ]
 
@@ -3400,7 +3408,9 @@ def local_deployment_row(item: dict[str, str]) -> str:
     label_map = {
         "complete": ("完成", "text-lime-200", "border-lime-300/25 bg-lime-300/10", "check"),
         "missing": ("缺少", "text-orange-200", "border-orange-300/25 bg-orange-300/10", "circle-alert"),
-        "future": ("未來", "text-sky-200", "border-sky-300/25 bg-sky-300/10", "clock-3"),
+        "setup": ("待接入", "text-orange-200", "border-orange-300/25 bg-orange-300/10", "plug-zap"),
+        "mvp": ("MVP", "text-sky-200", "border-sky-300/25 bg-sky-300/10", "beaker"),
+        "future": ("規劃", "text-sky-200", "border-sky-300/25 bg-sky-300/10", "clock-3"),
         "blocked": ("不適用", "text-slate-300", "border-slate-700 bg-slate-950/60", "minus-circle"),
     }
     label, text_class, shell_class, icon = label_map.get(state, label_map["future"])
