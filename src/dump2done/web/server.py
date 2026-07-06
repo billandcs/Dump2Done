@@ -522,6 +522,9 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
             <option value="ja">日本語</option>
           </select>
         </label>
+        <button id="settingsButton" class="inline-grid h-10 w-10 place-items-center rounded-lg border border-white/10 bg-white/5 text-slate-200 hover:border-lime-300/40 hover:text-lime-200" type="button" title="Settings" aria-label="Settings">
+          <i data-lucide="settings" class="h-4 w-4"></i>
+        </button>
       </nav>
     </div>
   </header>
@@ -686,6 +689,55 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
     </div>
   </div>
 
+  <div id="settingsModal" class="fixed inset-0 z-50 hidden bg-black/80 p-5 backdrop-blur-sm">
+    <div class="mx-auto flex min-h-full max-w-xl items-center justify-center">
+      <div class="w-full rounded-xl border border-white/10 bg-[#080b10] shadow-2xl">
+        <div class="flex items-center justify-between border-b border-white/10 px-5 py-4">
+          <div>
+            <p class="text-xs font-black uppercase tracking-[0.22em] text-lime-300" data-i18n="settingsEyebrow">Settings</p>
+            <h2 class="mt-1 text-xl font-black" data-i18n="settingsTitle">偏好設定</h2>
+          </div>
+          <button id="closeSettings" class="rounded-lg border border-white/10 px-3 py-2 text-xs font-black text-slate-300 hover:border-red-300/50 hover:text-red-200" type="button">
+            <i data-lucide="x" class="mr-1 inline h-3 w-3"></i><span data-i18n="close">關閉</span>
+          </button>
+        </div>
+        <form id="settingsForm" class="grid gap-4 p-5">
+          <label class="grid gap-2">
+            <span class="text-sm font-bold text-slate-300" data-i18n="defaultOutputFolder">預設輸出資料夾</span>
+            <input id="defaultOutputDirectory" class="h-11 min-w-0 rounded-lg border border-white/10 bg-black/40 px-3 text-sm text-slate-100 outline-none focus:border-lime-300/70">
+            <span class="text-xs leading-5 text-slate-500" data-i18n="defaultOutputHelp">圖片輸出預設會填入這個路徑。為了安全，目前限定在專案 output 目錄底下。</span>
+          </label>
+          <label class="flex items-start gap-3 rounded-lg border border-white/10 bg-white/[0.03] p-3">
+            <input id="autoPreviewOutput" type="checkbox" class="mt-1 h-4 w-4 accent-lime-300">
+            <span>
+              <span class="block text-sm font-black text-slate-200" data-i18n="autoPreviewOutput">輸出後自動預覽成品</span>
+              <span class="mt-1 block text-xs leading-5 text-slate-500" data-i18n="autoPreviewHelp">圖片完成後自動開新分頁預覽輸出檔。</span>
+            </span>
+          </label>
+          <label class="flex items-start gap-3 rounded-lg border border-white/10 bg-white/[0.03] p-3">
+            <input id="autoOpenOutputFolder" type="checkbox" class="mt-1 h-4 w-4 accent-lime-300">
+            <span>
+              <span class="block text-sm font-black text-slate-200" data-i18n="autoOpenOutputFolder">輸出後自動開啟資料夾</span>
+              <span class="mt-1 block text-xs leading-5 text-slate-500" data-i18n="autoOpenHelp">適合批次確認檔案，但如果常常輸出會比較打擾。</span>
+            </span>
+          </label>
+          <label class="grid gap-2">
+            <span class="text-sm font-bold text-slate-300" data-i18n="galleryDensity">畫廊密度</span>
+            <select id="galleryDensity" class="h-11 rounded-lg border border-white/10 bg-black/40 px-3 text-sm text-slate-100 outline-none focus:border-sky-300/70">
+              <option value="comfortable" data-i18n="densityComfortable">舒適</option>
+              <option value="compact" data-i18n="densityCompact">緊湊</option>
+            </select>
+          </label>
+          <div class="grid grid-cols-2 gap-3 pt-2">
+            <button id="resetSettings" class="rounded-lg border border-white/10 px-4 py-3 text-sm font-black text-slate-300 hover:border-orange-300/50 hover:text-orange-200" type="button" data-i18n="resetSettings">重設</button>
+            <button class="rounded-lg bg-lime-300 px-4 py-3 text-sm font-black text-slate-950 hover:bg-lime-200" type="submit" data-i18n="saveSettings">儲存設定</button>
+          </div>
+          <p id="settingsHint" class="min-h-5 text-xs font-semibold text-lime-200"></p>
+        </form>
+      </div>
+    </div>
+  </div>
+
   <script>
     const INITIAL_JOBS = __INITIAL_JOBS__;
     const INITIAL_GALLERY = __INITIAL_GALLERY__;
@@ -766,7 +818,23 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         autoDetect: "Auto Detect",
         imageEdit: "Image Edit",
         videoPipeline: "Video Pipeline",
-        unknown: "Unknown"
+        unknown: "Unknown",
+        settingsEyebrow: "Settings",
+        settingsTitle: "偏好設定",
+        defaultOutputFolder: "預設輸出資料夾",
+        defaultOutputHelp: "圖片輸出預設會填入這個路徑。為了安全，目前限定在專案 output 目錄底下。",
+        autoPreviewOutput: "輸出後自動預覽成品",
+        autoPreviewHelp: "圖片完成後自動開新分頁預覽輸出檔。",
+        autoOpenOutputFolder: "輸出後自動開啟資料夾",
+        autoOpenHelp: "適合批次確認檔案，但如果常常輸出會比較打擾。",
+        galleryDensity: "畫廊密度",
+        densityComfortable: "舒適",
+        densityCompact: "緊湊",
+        resetSettings: "重設",
+        saveSettings: "儲存設定",
+        settingsSaved: "設定已儲存。",
+        settingsReset: "設定已重設。",
+        settingsButtonLabel: "偏好設定"
       },
       en: {
         localControlPlane: "Local Control Plane",
@@ -824,7 +892,23 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         autoDetect: "Auto Detect",
         imageEdit: "Image Edit",
         videoPipeline: "Video Pipeline",
-        unknown: "Unknown"
+        unknown: "Unknown",
+        settingsEyebrow: "Settings",
+        settingsTitle: "Preferences",
+        defaultOutputFolder: "Default Output Folder",
+        defaultOutputHelp: "Image outputs use this path by default. For safety, it is currently limited to the project output folder.",
+        autoPreviewOutput: "Auto-preview output after export",
+        autoPreviewHelp: "Open the finished image in a new tab after export.",
+        autoOpenOutputFolder: "Auto-open folder after export",
+        autoOpenHelp: "Useful for batch checking files, but can be noisy when exporting often.",
+        galleryDensity: "Gallery Density",
+        densityComfortable: "Comfortable",
+        densityCompact: "Compact",
+        resetSettings: "Reset",
+        saveSettings: "Save Settings",
+        settingsSaved: "Settings saved.",
+        settingsReset: "Settings reset.",
+        settingsButtonLabel: "Preferences"
       },
       ja: {
         localControlPlane: "ローカル制御プレーン",
@@ -882,13 +966,49 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         autoDetect: "自動判定",
         imageEdit: "画像編集",
         videoPipeline: "動画 Pipeline",
-        unknown: "不明"
+        unknown: "不明",
+        settingsEyebrow: "Settings",
+        settingsTitle: "設定",
+        defaultOutputFolder: "既定の出力フォルダー",
+        defaultOutputHelp: "画像出力は既定でこのパスを使用します。安全のため、現在はプロジェクトの output 配下に限定しています。",
+        autoPreviewOutput: "出力後に自動プレビュー",
+        autoPreviewHelp: "画像出力後、新しいタブで完成ファイルを開きます。",
+        autoOpenOutputFolder: "出力後にフォルダーを自動で開く",
+        autoOpenHelp: "一括確認には便利ですが、頻繁な出力では少し邪魔になる場合があります。",
+        galleryDensity: "ギャラリー密度",
+        densityComfortable: "標準",
+        densityCompact: "コンパクト",
+        resetSettings: "リセット",
+        saveSettings: "設定を保存",
+        settingsSaved: "設定を保存しました。",
+        settingsReset: "設定をリセットしました。",
+        settingsButtonLabel: "設定"
       }
     };
     let currentLocale = localStorage.getItem("dump2done.locale") || "zh-Hant";
+    const DEFAULT_SETTINGS = {
+      defaultOutputDirectory: "output\\exports\\images",
+      autoPreviewOutput: false,
+      autoOpenOutputFolder: false,
+      galleryDensity: "comfortable"
+    };
+    let userSettings = loadSettings();
 
     function t(key) {
       return (I18N[currentLocale] && I18N[currentLocale][key]) || I18N["zh-Hant"][key] || key;
+    }
+
+    function loadSettings() {
+      try {
+        const parsed = JSON.parse(localStorage.getItem("dump2done.settings") || "{}");
+        return { ...DEFAULT_SETTINGS, ...(parsed && typeof parsed === "object" ? parsed : {}) };
+      } catch {
+        return { ...DEFAULT_SETTINGS };
+      }
+    }
+
+    function saveSettings() {
+      localStorage.setItem("dump2done.settings", JSON.stringify(userSettings));
     }
 
     function applyLanguage() {
@@ -901,6 +1021,36 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       });
       const selector = document.getElementById("languageSelect");
       if (selector) selector.value = currentLocale;
+      const settingsButton = document.getElementById("settingsButton");
+      if (settingsButton) {
+        settingsButton.title = t("settingsButtonLabel");
+        settingsButton.setAttribute("aria-label", t("settingsButtonLabel"));
+      }
+    }
+
+    function applySettingsToUi() {
+      const defaultOutput = document.getElementById("defaultOutputDirectory");
+      const imageOutput = document.querySelector('input[name="imageOutputDirectory"]');
+      const autoPreview = document.getElementById("autoPreviewOutput");
+      const autoOpen = document.getElementById("autoOpenOutputFolder");
+      const density = document.getElementById("galleryDensity");
+      if (defaultOutput) defaultOutput.value = userSettings.defaultOutputDirectory;
+      if (imageOutput && (!imageOutput.value || imageOutput.value === DEFAULT_SETTINGS.defaultOutputDirectory)) {
+        imageOutput.value = userSettings.defaultOutputDirectory;
+      }
+      if (autoPreview) autoPreview.checked = !!userSettings.autoPreviewOutput;
+      if (autoOpen) autoOpen.checked = !!userSettings.autoOpenOutputFolder;
+      if (density) density.value = userSettings.galleryDensity || DEFAULT_SETTINGS.galleryDensity;
+    }
+
+    function openSettingsModal() {
+      applySettingsToUi();
+      document.getElementById("settingsHint").textContent = "";
+      document.getElementById("settingsModal").classList.remove("hidden");
+    }
+
+    function closeSettingsModal() {
+      document.getElementById("settingsModal").classList.add("hidden");
     }
 
     function render() {
@@ -910,6 +1060,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       renderGallery();
       renderLog();
       applyLanguage();
+      applySettingsToUi();
       lucide.createIcons();
     }
 
@@ -992,16 +1143,17 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         lucide.createIcons();
         return;
       }
+      const compact = userSettings.galleryDensity === "compact";
       grid.innerHTML = mediaGallery.map(item => `
-        <article class="min-w-0 rounded-xl border border-white/10 bg-black/20 p-4">
+        <article class="min-w-0 rounded-xl border border-white/10 bg-black/20 ${compact ? "p-3" : "p-4"}">
           ${galleryPreview(item)}
           <h3 class="truncate font-black">${escapeHtml(item.fileName)}</h3>
           <p class="mt-1 truncate text-xs font-bold text-slate-500" title="${escapeAttr(item.relativePath)}">${escapeHtml(item.jobId)} · ${escapeHtml(item.relativePath)}</p>
-          <dl class="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-400">
+          <dl class="${compact ? "mt-2" : "mt-3"} grid grid-cols-2 gap-2 text-xs text-slate-400">
             <div><dt class="font-bold text-slate-500">${escapeHtml(t("created"))}</dt><dd>${escapeHtml(item.createdAt)}</dd></div>
             <div><dt class="font-bold text-slate-500">${escapeHtml(t("resolution"))}</dt><dd>${escapeHtml(item.resolution)}</dd></div>
           </dl>
-          <div class="mt-4 grid grid-cols-2 gap-2">
+          <div class="${compact ? "mt-3" : "mt-4"} grid grid-cols-2 gap-2">
             ${primaryArtifactAction(item)}
             <button class="rounded-lg border border-lime-300/30 px-3 py-2 text-xs font-black text-lime-100 hover:bg-lime-300/10" onclick="openFolderById('${escapeAttr(item.id)}')"><i data-lucide="folder-open" class="mr-1 inline h-3 w-3"></i>${escapeHtml(t("openFolder"))}</button>
           </div>
@@ -1060,6 +1212,35 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       localStorage.setItem("dump2done.locale", currentLocale);
       render();
       updateEditorMode(currentMediaType);
+    });
+    document.getElementById("settingsButton").addEventListener("click", openSettingsModal);
+    document.getElementById("closeSettings").addEventListener("click", closeSettingsModal);
+    document.getElementById("settingsModal").addEventListener("click", event => {
+      if (event.target.id === "settingsModal") closeSettingsModal();
+    });
+    document.getElementById("settingsForm").addEventListener("submit", event => {
+      event.preventDefault();
+      userSettings = {
+        defaultOutputDirectory: document.getElementById("defaultOutputDirectory").value.trim() || DEFAULT_SETTINGS.defaultOutputDirectory,
+        autoPreviewOutput: document.getElementById("autoPreviewOutput").checked,
+        autoOpenOutputFolder: document.getElementById("autoOpenOutputFolder").checked,
+        galleryDensity: document.getElementById("galleryDensity").value || DEFAULT_SETTINGS.galleryDensity
+      };
+      saveSettings();
+      applySettingsToUi();
+      const imageOutput = document.querySelector('input[name="imageOutputDirectory"]');
+      if (imageOutput) imageOutput.value = userSettings.defaultOutputDirectory;
+      renderGallery();
+      lucide.createIcons();
+      document.getElementById("settingsHint").textContent = t("settingsSaved");
+    });
+    document.getElementById("resetSettings").addEventListener("click", () => {
+      userSettings = { ...DEFAULT_SETTINGS };
+      saveSettings();
+      applySettingsToUi();
+      renderGallery();
+      lucide.createIcons();
+      document.getElementById("settingsHint").textContent = t("settingsReset");
     });
     const mediaFileInput = document.getElementById("mediaFile");
     const dropZone = document.getElementById("dropZone");
@@ -1164,7 +1345,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
             profile: data.profile,
             model_version: data.modelVersion,
             resolution: currentMediaType === "image" ? "original" : data.resolution,
-            output_directory: data.imageOutputDirectory || ""
+            output_directory: data.imageOutputDirectory || userSettings.defaultOutputDirectory
           })
         });
         const payload = await response.json();
@@ -1177,6 +1358,12 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         if (payload.command) appendLogLine(`[next] ${payload.command}`);
         hint.textContent = payload.message;
         showMediaResult(payload);
+        if (payload.output_url && userSettings.autoPreviewOutput) {
+          window.open(payload.output_url, "_blank", "noopener");
+        }
+        if ((payload.output_folder || payload.output_path) && userSettings.autoOpenOutputFolder) {
+          openFolder(payload.output_folder || payload.output_path, "media output");
+        }
         render();
         connectSseStream();
       } catch (error) {
@@ -1308,9 +1495,10 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       const safeName = escapeAttr(item.fileName || "");
       const badge = escapeHtml(t(`${item.kind}Label`) || item.kind);
       const duration = escapeHtml(item.duration || "");
+      const previewSpacing = userSettings.galleryDensity === "compact" ? "mb-3" : "mb-4";
       if (item.kind === "image") {
         return `
-          <button class="group relative mb-4 block aspect-video w-full overflow-hidden rounded-lg border border-white/10 bg-black/45 text-left" onclick="playArtifactById('${safeId}')" title="${safeName}">
+          <button class="group relative ${previewSpacing} block aspect-video w-full overflow-hidden rounded-lg border border-white/10 bg-black/45 text-left" onclick="playArtifactById('${safeId}')" title="${safeName}">
             <img src="${safeUrl}" class="h-full w-full object-contain transition duration-200 group-hover:scale-[1.02]" alt="${safeName}" loading="lazy">
             <span class="absolute left-3 top-3 rounded-md bg-black/70 px-2 py-1 text-xs font-black text-white">${badge}</span>
             <span class="absolute bottom-3 right-3 rounded-md bg-sky-300/90 px-2 py-1 text-xs font-black text-slate-950">${escapeHtml(t("previewImage"))}</span>
@@ -1319,7 +1507,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       }
       if (item.kind === "video") {
         return `
-          <button class="group relative mb-4 block aspect-video w-full overflow-hidden rounded-lg border border-white/10 bg-black text-left" onclick="playArtifactById('${safeId}')" title="${safeName}">
+          <button class="group relative ${previewSpacing} block aspect-video w-full overflow-hidden rounded-lg border border-white/10 bg-black text-left" onclick="playArtifactById('${safeId}')" title="${safeName}">
             <video src="${safeUrl}" class="h-full w-full object-contain opacity-90 transition duration-200 group-hover:opacity-100" muted playsinline preload="metadata"></video>
             <span class="absolute left-3 top-3 rounded-md bg-black/70 px-2 py-1 text-xs font-black text-white">${badge}</span>
             <span class="absolute bottom-3 left-3 rounded-md bg-black/70 px-2 py-1 text-xs font-black text-white">${duration}</span>
@@ -1328,7 +1516,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         `;
       }
       return `
-        <button class="group relative mb-4 grid aspect-video w-full place-items-center overflow-hidden rounded-lg border border-white/10 bg-gradient-to-br ${galleryGradient(item.accent)} p-4 text-left" onclick="playArtifactById('${safeId}')" title="${safeName}">
+        <button class="group relative ${previewSpacing} grid aspect-video w-full place-items-center overflow-hidden rounded-lg border border-white/10 bg-gradient-to-br ${galleryGradient(item.accent)} p-4 text-left" onclick="playArtifactById('${safeId}')" title="${safeName}">
           <span class="absolute left-3 top-3 rounded-md bg-black/70 px-2 py-1 text-xs font-black text-white">${badge}</span>
           <span class="grid gap-4 text-center">
             <span class="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-black/45 text-lime-200 ring-1 ring-lime-300/30">
