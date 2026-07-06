@@ -1166,7 +1166,11 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         jobState: "狀態",
         progressShort: "進度",
         currentStageShort: "目前",
-        noActiveJob: "未選擇",
+        noActiveJob: "閒置",
+        idleTitle: "目前沒有執行中的任務",
+        idleMeta: "建立新任務後會在這裡顯示即時進度；也可以從任務佇列點選歷史任務查看細節。",
+        idleCurrent: "等待新任務",
+        idleProgress: "--",
         runnerInterrupted: "runner 已中斷",
         restartRequired: "需要重新建立或重跑任務",
         statusRunning: "執行中",
@@ -1199,7 +1203,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         noJobs: "尚無真實任務。建立新任務後會出現在這裡。",
         noVideoPath: "沒有影片路徑",
         unknownProfile: "未知設定檔",
-        noTaskFlow: "建立第一個任務後會顯示流程。",
+        noTaskFlow: "尚未選擇任務。建立新任務後會顯示即時流程；點選左側任務可查看歷史狀態。",
         emptyGalleryTitle: "目前沒有可操作的真實產出物",
         emptyGalleryHelp: "這裡只顯示真正產出的圖片、影片或聲音檔。JSON 報告與原始上傳素材會留在 job 資料夾內供除錯，不放進畫廊。",
         created: "Created",
@@ -1326,7 +1330,11 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         jobState: "State",
         progressShort: "Progress",
         currentStageShort: "Now",
-        noActiveJob: "None",
+        noActiveJob: "Idle",
+        idleTitle: "No job is running",
+        idleMeta: "Create a new job to see live progress here, or select a history item from the queue.",
+        idleCurrent: "Waiting",
+        idleProgress: "--",
         runnerInterrupted: "Runner interrupted",
         restartRequired: "Create or rerun this job",
         statusRunning: "Running",
@@ -1359,7 +1367,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         noJobs: "No real jobs yet. New jobs will appear here.",
         noVideoPath: "No video path",
         unknownProfile: "unknown profile",
-        noTaskFlow: "Create the first job to see the pipeline flow.",
+        noTaskFlow: "No job is selected. Create a new job to see live progress, or select a queued/history item.",
         emptyGalleryTitle: "No playable outputs yet",
         emptyGalleryHelp: "Only produced images, videos, or audio files appear here. JSON reports and original uploads stay in the job folder for debugging.",
         created: "Created",
@@ -1486,7 +1494,11 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         jobState: "状態",
         progressShort: "進捗",
         currentStageShort: "現在",
-        noActiveJob: "未選択",
+        noActiveJob: "待機中",
+        idleTitle: "実行中のジョブはありません",
+        idleMeta: "新しいジョブを作成するとここにリアルタイム進捗が表示されます。履歴はジョブキューから選択できます。",
+        idleCurrent: "待機中",
+        idleProgress: "--",
         runnerInterrupted: "runner が中断されました",
         restartRequired: "ジョブを再作成または再実行してください",
         statusRunning: "実行中",
@@ -1519,7 +1531,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         noJobs: "ジョブはまだありません。新しいジョブはここに表示されます。",
         noVideoPath: "動画パスなし",
         unknownProfile: "不明なプロファイル",
-        noTaskFlow: "最初のジョブを作成するとフローが表示されます。",
+        noTaskFlow: "ジョブは選択されていません。新しいジョブを作成するとリアルタイムフローが表示されます。",
         emptyGalleryTitle: "再生できる出力はまだありません",
         emptyGalleryHelp: "ここには生成された画像、動画、音声のみ表示します。JSON レポートと元ファイルはデバッグ用にジョブフォルダーへ残します。",
         created: "作成日時",
@@ -1819,11 +1831,12 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
     }
 
     function chooseDefaultJobId(items) {
-      const ordered = [...(items || [])].sort((a, b) => {
-        const weight = { running: 0, cancelling: 1, queued: 2, interrupted: 3, failed: 4, completed: 5, cancelled: 6, incomplete: 7 };
+      const actionable = (items || []).filter(job => ["running", "cancelling", "queued"].includes(job.status));
+      const ordered = [...actionable].sort((a, b) => {
+        const weight = { running: 0, cancelling: 1, queued: 2 };
         return (weight[a.status] ?? 9) - (weight[b.status] ?? 9) || String(b.updatedAt || "").localeCompare(String(a.updatedAt || ""));
       });
-      return ordered[0] && ordered[0].id;
+      return ordered[0] ? ordered[0].id : "";
     }
 
     function renderStats() {
@@ -1833,9 +1846,11 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       const current = document.getElementById("statQueue");
       if (!job) {
         state.textContent = t("noActiveJob");
-        progress.textContent = "--";
-        current.textContent = "--";
+        progress.textContent = t("idleProgress");
+        current.textContent = t("idleCurrent");
         state.className = "block truncate text-sm text-slate-400";
+        progress.className = "block text-sm text-slate-400";
+        current.className = "block truncate text-sm text-slate-400";
         return;
       }
       const phase = activePhase(job);
@@ -1843,6 +1858,8 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       progress.textContent = `${overallProgress(job)}%`;
       current.textContent = job.status === "interrupted" ? t("runnerInterrupted") : phase ? phase.label : t("noNextStep");
       state.className = `block truncate text-sm ${statusTextClass(job.status)}`;
+      progress.className = "block text-sm text-lime-300";
+      current.className = "block truncate text-sm text-orange-300";
     }
 
     function renderJobs() {
@@ -1887,18 +1904,35 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
     }
 
     function renderPipeline() {
-      const job = jobs.find(item => item.id === activeJobId) || jobs[0];
+      const job = jobs.find(item => item.id === activeJobId);
       const title = document.getElementById("activeJobTitle");
       const meta = document.getElementById("activeJobMeta");
       const summary = document.getElementById("pipelineSummary");
       const target = document.getElementById("pipelineSteps");
       const cancelButton = document.getElementById("cancelActiveJob");
       if (!job) {
-        title.textContent = t("selectJob");
-        meta.textContent = "";
-        summary.classList.add("hidden");
+        title.textContent = t("idleTitle");
+        title.title = "";
+        meta.textContent = t("idleMeta");
+        summary.classList.remove("hidden");
+        summary.innerHTML = `
+          <div class="flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <p class="text-xs font-black uppercase tracking-wide text-sky-300">${escapeHtml(t("currentStep"))}</p>
+              <p class="mt-1 text-lg font-black text-slate-100">${escapeHtml(t("idleCurrent"))}</p>
+              <p class="mt-1 text-xs font-semibold text-slate-500">${escapeHtml(t("idleMeta"))}</p>
+            </div>
+            <div class="rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-sm font-black text-slate-400">
+              ${escapeHtml(t("noActiveJob"))}
+            </div>
+          </div>
+        `;
         cancelButton.classList.add("hidden");
-        target.innerHTML = `<p class="text-sm text-slate-400">${escapeHtml(t("noTaskFlow"))}</p>`;
+        target.innerHTML = `
+          <div class="rounded-xl border border-dashed border-white/15 bg-white/[0.03] p-5 text-sm leading-6 text-slate-400 md:col-span-2 xl:col-span-4">
+            ${escapeHtml(t("noTaskFlow"))}
+          </div>
+        `;
         return;
       }
       title.textContent = `${displayJobName(job.id)} · ${statusLabel(job.status)}`;
