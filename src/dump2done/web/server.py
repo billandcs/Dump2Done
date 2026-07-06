@@ -48,7 +48,7 @@ DEFAULT_OUTPUT_ROOT = Path("output/jobs")
 CONSOLE_LOG_PATH = Path("output/logs/dashboard_console.ndjson")
 DASHBOARD_SETTINGS_PATH = Path("output/dashboard_settings.json")
 DASHBOARD_DEFAULT_SETTINGS = {
-    "defaultOutputDirectory": "output\\exports\\images",
+    "defaultOutputDirectory": "output",
     "autoPreviewOutput": False,
     "autoOpenOutputFolder": False,
     "galleryDensity": "comfortable",
@@ -744,7 +744,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
                   <i data-lucide="settings" class="h-4 w-4"></i>
                 </button>
               </span>
-              <input id="imageOutputDirectory" name="imageOutputDirectory" value="output\exports\images" class="h-11 min-w-0 rounded-lg border border-white/10 bg-black/40 px-3 text-sm text-slate-100 outline-none focus:border-lime-300/70">
+              <input id="imageOutputDirectory" name="imageOutputDirectory" value="output" class="h-11 min-w-0 rounded-lg border border-white/10 bg-black/40 px-3 text-sm text-slate-100 outline-none focus:border-lime-300/70">
             </label>
             <div class="flex flex-wrap gap-2">
               <button class="prompt-chip rounded-lg border border-lime-300/25 bg-lime-300/10 px-3 py-2 text-xs font-black text-lime-100 hover:bg-lime-300/20" type="button" data-prompt="往左旋轉90度">左轉90度</button>
@@ -883,7 +883,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
           <label class="grid gap-2">
             <span class="text-sm font-bold text-slate-300" data-i18n="defaultOutputFolder">預設輸出資料夾</span>
             <input id="defaultOutputDirectory" class="h-11 min-w-0 rounded-lg border border-white/10 bg-black/40 px-3 text-sm text-slate-100 outline-none focus:border-lime-300/70">
-            <span class="text-xs leading-5 text-slate-500" data-i18n="defaultOutputHelp">圖片輸出預設會填入這個路徑。為了安全，目前限定在專案 output 目錄底下。</span>
+            <span class="text-xs leading-5 text-slate-500" data-i18n="defaultOutputHelp">所有輸出預設會落在這個資料夾。為了安全，目前限定在專案 output 目錄底下。</span>
           </label>
           <label class="flex items-start gap-3 rounded-lg border border-white/10 bg-white/[0.03] p-3">
             <input id="autoPreviewOutput" type="checkbox" class="mt-1 h-4 w-4 accent-lime-300">
@@ -1069,7 +1069,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         settingsEyebrow: "Settings",
         settingsTitle: "偏好設定",
         defaultOutputFolder: "預設輸出資料夾",
-        defaultOutputHelp: "圖片輸出預設會填入這個路徑。為了安全，目前限定在專案 output 目錄底下。",
+        defaultOutputHelp: "所有輸出預設會落在這個資料夾。為了安全，目前限定在專案 output 目錄底下。",
         autoPreviewOutput: "輸出後自動預覽成品",
         autoPreviewHelp: "圖片完成後自動開新分頁預覽輸出檔。",
         autoOpenOutputFolder: "輸出後自動開啟資料夾",
@@ -1167,7 +1167,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         settingsEyebrow: "Settings",
         settingsTitle: "Preferences",
         defaultOutputFolder: "Default Output Folder",
-        defaultOutputHelp: "Image outputs use this path by default. For safety, it is currently limited to the project output folder.",
+        defaultOutputHelp: "All outputs use this folder by default. For safety, it is currently limited to the project output folder.",
         autoPreviewOutput: "Auto-preview output after export",
         autoPreviewHelp: "Open the finished image in a new tab after export.",
         autoOpenOutputFolder: "Auto-open folder after export",
@@ -1265,7 +1265,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         settingsEyebrow: "Settings",
         settingsTitle: "設定",
         defaultOutputFolder: "既定の出力フォルダー",
-        defaultOutputHelp: "画像出力は既定でこのパスを使用します。安全のため、現在はプロジェクトの output 配下に限定しています。",
+        defaultOutputHelp: "すべての出力は既定でこのフォルダーを使用します。安全のため、現在はプロジェクトの output 配下に限定しています。",
         autoPreviewOutput: "出力後に自動プレビュー",
         autoPreviewHelp: "画像出力後、新しいタブで完成ファイルを開きます。",
         autoOpenOutputFolder: "出力後にフォルダーを自動で開く",
@@ -1298,7 +1298,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
     };
     let currentLocale = localStorage.getItem("dump2done.locale") || "zh-Hant";
     const DEFAULT_SETTINGS = {
-      defaultOutputDirectory: "output\\exports\\images",
+      defaultOutputDirectory: "output",
       autoPreviewOutput: false,
       autoOpenOutputFolder: false,
       galleryDensity: "comfortable",
@@ -3429,7 +3429,7 @@ def resolve_media_export_directory(output_root: Path, requested_directory: str) 
         raw_target = Path(requested_directory)
         target = raw_target.resolve() if raw_target.is_absolute() else (Path.cwd() / raw_target).resolve()
     else:
-        target = (output_base / "exports" / "images").resolve()
+        target = output_base.resolve()
     try:
         target.relative_to(output_base)
     except ValueError as exc:
