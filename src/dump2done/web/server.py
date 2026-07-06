@@ -6,6 +6,7 @@ import json
 import mimetypes
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from types import SimpleNamespace
 from urllib.parse import parse_qs, quote, urlparse
 
 
@@ -61,7 +62,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._send_file(self.output_root, job_id, media_path)
             return
         if parsed.path == "/env":
-            self._send_html(render_env_report(self.output_root.parent / "env_report.json"))
+            query = parse_qs(parsed.query)
+            report = get_current_env_report(self.output_root.parent / "env_report.json")
+            if wants_json(self.headers.get("Accept", ""), query):
+                self._send_json(report)
+            else:
+                self._send_html(render_env_dashboard(report))
             return
         if parsed.path == "/health":
             self._send_json({"status": "ok"})
@@ -380,27 +386,375 @@ def render_artifact(output_root: Path, job_id: str, artifact: str) -> str:
     )
 
 
-def render_env_report(env_report_path: Path) -> str:
-    if env_report_path.exists():
-        content = env_report_path.read_text(encoding="utf-8", errors="replace")
-    else:
-        content = "Environment report not found. Run: python check_env.py --output output/env_report.json"
+def get_current_env_report(cache_path: Path) -> dict:
+    """Run the current project environment probe and cache the latest report."""
+    try:
+        import check_env
 
-    return page(
-        "Environment Report",
-        f"""
-        <div class="raw-page">
-          <header class="topbar raw-top">
-            <div>
-              <p class="eyebrow">Platform</p>
-              <h1>Environment Report</h1>
-            </div>
-            <a class="pill" href="/">Back</a>
-          </header>
-          <pre>{html.escape(content)}</pre>
-        </div>
-        """,
+        report = check_env.build_report(
+            SimpleNamespace(ollama_url="http://127.0.0.1:11434")
+        )
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        cache_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+        return report
+    except Exception as exc:
+        cached = read_json_or_none(cache_path) or {}
+        cached["dashboard_probe_error"] = {
+            "message": str(exc),
+            "fallback": "Using cached output/env_report.json when available.",
+        }
+        return cached
+
+
+def wants_json(accept_header: str, query: dict[str, list[str]]) -> bool:
+    requested_format = (query.get("format") or query.get("as") or [""])[0].lower()
+    if requested_format == "json":
+        return True
+    if "application/json" in accept_header and "text/html" not in accept_header:
+        return True
+    return False
+
+
+def render_env_dashboard(report: dict) -> str:
+    basic = report.get("basic", {})
+    compute = report.get("compute", {})
+    memory = compute.get("memory", {})
+    disk = compute.get("disk", {})
+    gpu = report.get("gpu_cuda", {})
+    ffmpeg = report.get("ffmpeg_codecs", {})
+    asr = report.get("asr", {})
+    llm = report.get("llm", {})
+    qualcomm = report.get("qualcomm_platform", {})
+    q_ready = report.get("qualcomm_readiness", {})
+    n_ready = report.get("nvidia_readiness", {})
+    hardware = report.get("hardware_level", {})
+
+    memory_used = clamp_percent(memory.get("percent_used"))
+    disk_total = safe_float(disk.get("cwd_total_gb"))
+    disk_free = safe_float(disk.get("cwd_free_gb"))
+    disk_used = clamp_percent(((disk_total - disk_free) / disk_total * 100) if disk_total else 0)
+    emulated = bool(qualcomm.get("likely_emulated_python"))
+
+    software_cards = "\n".join(
+        [
+            dependency_card("Python", basic.get("python", {}).get("version"), True, "terminal"),
+            dependency_card("pip", basic.get("pip", {}).get("version"), basic.get("pip", {}).get("available"), "package"),
+            dependency_card("Git", basic.get("git", {}).get("version"), basic.get("git", {}).get("available"), "git-branch"),
+            dependency_card("FFmpeg", basic.get("ffmpeg", {}).get("version"), basic.get("ffmpeg", {}).get("available"), "film"),
+            dependency_card("Ollama", llm.get("ollama_version"), llm.get("ollama_api", {}).get("available"), "brain-circuit"),
+            dependency_card("Faster-Whisper", asr.get("ctranslate2_version"), asr.get("faster_whisper_installed"), "audio-lines"),
+        ]
     )
+
+    warning_html = ""
+    if emulated:
+        warning_html = f"""
+        <section class="rounded-2xl border border-orange-400/50 bg-orange-500/15 p-5 shadow-2xl shadow-orange-950/30">
+          <div class="flex items-start gap-4">
+            <div class="rounded-xl bg-orange-400 p-3 text-black"><i data-lucide="triangle-alert" class="h-6 w-6"></i></div>
+            <div>
+              <p class="text-sm font-semibold uppercase tracking-wide text-orange-200">Critical Performance Warning</p>
+              <h2 class="mt-1 text-2xl font-bold text-orange-50">目前在 Qualcomm ARM64 平台上模擬運行 x64 Python</h2>
+              <p class="mt-2 max-w-4xl text-sm leading-6 text-orange-100">
+                這會讓 ASR、OpenCV、ONNX Runtime、模型載入與影片處理承受明顯效能瓶頸。建議改用 native ARM64 Python、
+                ARM64 wheels，並把未來可 ONNX 化的模型逐步導向 QNNExecutionProvider 或 DirectMLExecutionProvider。
+              </p>
+              <div class="mt-4 flex flex-wrap gap-2 text-xs font-semibold">
+                <span class="rounded-full bg-orange-400 px-3 py-1 text-black">安裝 ARM64 Python</span>
+                <span class="rounded-full bg-white/10 px-3 py-1 text-orange-100">避免 CUDA/NVENC 本機假設</span>
+                <span class="rounded-full bg-white/10 px-3 py-1 text-orange-100">優先 CPU int8 + cache/resume</span>
+              </div>
+            </div>
+          </div>
+        </section>
+        """
+
+    html_doc = """
+<!doctype html>
+<html lang="zh-Hant" class="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dump2Done Platform Environment Report</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            panel: '#0d1117',
+            panel2: '#151b23',
+            limeok: '#a3e635',
+            hotorange: '#fb923c',
+            danger: '#f87171'
+          }
+        }
+      }
+    }
+  </script>
+</head>
+<body class="min-h-screen bg-[#05070a] text-slate-100 antialiased">
+  <div class="fixed inset-0 -z-10 bg-[radial-gradient(circle_at_top_right,rgba(163,230,53,0.16),transparent_30%),radial-gradient(circle_at_top_left,rgba(56,189,248,0.12),transparent_28%)]"></div>
+  <main class="mx-auto max-w-7xl px-5 py-6 lg:px-8">
+    <header class="mb-6 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+      <div>
+        <div class="mb-3 inline-flex items-center gap-2 rounded-full border border-lime-300/30 bg-lime-300/10 px-3 py-1 text-xs font-semibold text-lime-200">
+          <i data-lucide="radar" class="h-4 w-4"></i>
+          Live probe generated on request
+        </div>
+        <h1 class="text-3xl font-black tracking-tight md:text-5xl">Platform Environment Report</h1>
+        <p class="mt-2 max-w-3xl text-sm leading-6 text-slate-400">
+          即時診斷 Dump2Done 本地硬體、AI runtime、依賴元件與 Qualcomm / NVIDIA readiness。
+        </p>
+      </div>
+      <div class="flex flex-wrap gap-2">
+        <a href="/" class="rounded-xl border border-slate-700 bg-panel2 px-4 py-2 text-sm font-bold text-slate-200 hover:border-sky-400">Back to Dashboard</a>
+        <a href="/env?format=json" class="rounded-xl border border-lime-300/40 bg-lime-300/10 px-4 py-2 text-sm font-bold text-lime-200 hover:bg-lime-300/20">Raw JSON</a>
+      </div>
+    </header>
+
+    __WARNING__
+
+    <section class="mt-5 grid gap-4 lg:grid-cols-4">
+      __HERO_CARD__
+      __MEMORY_CARD__
+      __DISK_CARD__
+      __PYTHON_CARD__
+    </section>
+
+    <section class="mt-5 grid gap-5 lg:grid-cols-2">
+      __NVIDIA_CARD__
+      __QUALCOMM_CARD__
+    </section>
+
+    <section class="mt-5 rounded-2xl border border-slate-800 bg-panel/95 p-5 shadow-xl">
+      <div class="mb-4 flex items-center justify-between gap-3">
+        <div>
+          <p class="text-xs font-bold uppercase tracking-wide text-slate-500">Dependency Matrix</p>
+          <h2 class="mt-1 text-xl font-black">軟體依賴元件清單</h2>
+        </div>
+        <i data-lucide="layout-grid" class="h-6 w-6 text-lime-300"></i>
+      </div>
+      <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">__SOFTWARE_CARDS__</div>
+    </section>
+
+    <section class="mt-5 grid gap-5 lg:grid-cols-3">
+      __CPU_CARD__
+      __AI_CARD__
+      __RECOMMEND_CARD__
+    </section>
+  </main>
+  <script>
+    if (window.lucide) { window.lucide.createIcons(); }
+  </script>
+</body>
+</html>
+"""
+
+    replacements = {
+        "__WARNING__": warning_html,
+        "__HERO_CARD__": env_summary_card("Hardware Level", hardware.get("level", "unknown"), hardware.get("reason", "No reason available."), "activity", "lime"),
+        "__MEMORY_CARD__": progress_card("Memory Used", f"{memory_used:.0f}%", memory_used, "memory-stick", "lime" if memory_used < 70 else "orange"),
+        "__DISK_CARD__": progress_card("Workspace Disk Used", f"{disk_used:.0f}%", disk_used, "hard-drive", "lime" if disk_used < 75 else "orange", f"{disk_free:.1f} GB free"),
+        "__PYTHON_CARD__": env_summary_card("Python Runtime", basic.get("python", {}).get("version", "unknown"), "x64 emulation likely" if emulated else "native or non-ARM path", "terminal", "orange" if emulated else "lime"),
+        "__NVIDIA_CARD__": readiness_card("NVIDIA Readiness", n_ready, nvidia_blockers(report), "gpu", "sky"),
+        "__QUALCOMM_CARD__": readiness_card("Qualcomm Readiness", q_ready, q_ready.get("blockers", []), "cpu", "lime"),
+        "__SOFTWARE_CARDS__": software_cards,
+        "__CPU_CARD__": detail_card("CPU / OS", "cpu", [
+            ("CPU", compute.get("cpu", {}).get("model", "unknown")),
+            ("Threads", compute.get("cpu", {}).get("logical_threads", "unknown")),
+            ("OS", f"{basic.get('os', {}).get('system', 'unknown')} {basic.get('os', {}).get('release', '')}"),
+        ]),
+        "__AI_CARD__": detail_card("AI Runtime", "brain", [
+            ("ASR", "faster-whisper installed" if asr.get("faster_whisper_installed") else "missing"),
+            ("Ollama API", "available" if llm.get("ollama_api", {}).get("available") else "unavailable"),
+            ("Local models", ", ".join(llm.get("ollama_api", {}).get("models", [])) or "none"),
+        ]),
+        "__RECOMMEND_CARD__": detail_card("Optimization Notes", "wrench", [
+            ("Profile", qualcomm.get("recommended_local_profile", "default")),
+            ("Encoder", "CPU libx264/libx265" if not ffmpeg.get("gpu_encoding_available") else "GPU encoder available"),
+            ("Next", "native ARM64 Python + ONNX Runtime QNN/DirectML validation" if emulated else "ASR and clip pipeline profiling"),
+        ]),
+    }
+    for key, value in replacements.items():
+        html_doc = html_doc.replace(key, value)
+    return html_doc
+
+
+def env_summary_card(title: str, value: object, description: object, icon: str, tone: str) -> str:
+    tone_classes = tone_palette(tone)
+    return f"""
+    <article class="rounded-2xl border border-slate-800 bg-panel/95 p-5 shadow-xl lg:col-span-1">
+      <div class="mb-4 flex items-center justify-between">
+        <p class="text-xs font-bold uppercase tracking-wide text-slate-500">{html.escape(title)}</p>
+        <span class="rounded-xl {tone_classes['soft']} p-2 {tone_classes['text']}"><i data-lucide="{icon}" class="h-5 w-5"></i></span>
+      </div>
+      <div class="text-3xl font-black {tone_classes['text']}">{html.escape(str(value))}</div>
+      <p class="mt-2 text-sm leading-5 text-slate-400">{html.escape(str(description))}</p>
+    </article>
+    """
+
+
+def progress_card(
+    title: str,
+    value: str,
+    percent: float,
+    icon: str,
+    tone: str,
+    subtitle: str | None = None,
+) -> str:
+    tone_classes = tone_palette(tone)
+    return f"""
+    <article class="rounded-2xl border border-slate-800 bg-panel/95 p-5 shadow-xl">
+      <div class="mb-4 flex items-center justify-between">
+        <p class="text-xs font-bold uppercase tracking-wide text-slate-500">{html.escape(title)}</p>
+        <span class="rounded-xl {tone_classes['soft']} p-2 {tone_classes['text']}"><i data-lucide="{icon}" class="h-5 w-5"></i></span>
+      </div>
+      <div class="flex items-end justify-between gap-3">
+        <div class="text-3xl font-black">{html.escape(value)}</div>
+        <div class="text-xs font-semibold text-slate-500">{html.escape(subtitle or '')}</div>
+      </div>
+      <div class="mt-4 h-3 overflow-hidden rounded-full bg-slate-800">
+        <div class="h-full rounded-full {tone_classes['bar']}" style="width: {clamp_percent(percent):.1f}%"></div>
+      </div>
+    </article>
+    """
+
+
+def readiness_card(title: str, readiness: dict, blockers: list, icon: str, tone: str) -> str:
+    tone_classes = tone_palette(tone)
+    tier = readiness.get("tier", "unknown")
+    score = readiness.get("score", "unknown")
+    meaning = readiness.get("meaning", "No readiness details available.")
+    blocker_items = "\n".join(
+        f"""
+        <li class="flex gap-2 rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-sm text-slate-300">
+          <i data-lucide="circle-alert" class="mt-0.5 h-4 w-4 shrink-0 text-orange-300"></i>
+          <span>{html.escape(str(blocker))}</span>
+        </li>
+        """
+        for blocker in blockers
+        if blocker
+    )
+    if not blocker_items:
+        blocker_items = """
+        <li class="flex gap-2 rounded-xl border border-lime-300/20 bg-lime-300/10 p-3 text-sm text-lime-100">
+          <i data-lucide="check-circle-2" class="mt-0.5 h-4 w-4 shrink-0 text-lime-300"></i>
+          <span>No major blockers detected.</span>
+        </li>
+        """
+
+    return f"""
+    <article class="rounded-2xl border border-slate-800 bg-panel/95 p-5 shadow-xl">
+      <div class="flex items-start justify-between gap-4">
+        <div>
+          <p class="text-xs font-bold uppercase tracking-wide text-slate-500">{html.escape(title)}</p>
+          <h2 class="mt-2 text-3xl font-black {tone_classes['text']}">{html.escape(str(tier))}</h2>
+        </div>
+        <span class="rounded-xl {tone_classes['soft']} p-3 {tone_classes['text']}"><i data-lucide="{icon}" class="h-6 w-6"></i></span>
+      </div>
+      <div class="mt-4 grid grid-cols-2 gap-3">
+        <div class="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+          <p class="text-xs text-slate-500">Score</p>
+          <p class="mt-1 text-2xl font-black">{html.escape(str(score))}</p>
+        </div>
+        <div class="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+          <p class="text-xs text-slate-500">Tier</p>
+          <p class="mt-1 text-2xl font-black">{html.escape(str(tier))}</p>
+        </div>
+      </div>
+      <p class="mt-4 text-sm leading-6 text-slate-400">{html.escape(str(meaning))}</p>
+      <h3 class="mt-5 text-xs font-bold uppercase tracking-wide text-slate-500">Blockers</h3>
+      <ul class="mt-3 grid gap-2">{blocker_items}</ul>
+    </article>
+    """
+
+
+def dependency_card(name: str, detail: object, available: object, icon: str) -> str:
+    state = "ok" if available else "missing"
+    color = "bg-lime-400" if available else "bg-red-400"
+    text_color = "text-lime-300" if available else "text-red-300"
+    label = "Available" if available else "Missing"
+    clean_detail = str(detail or "not detected").splitlines()[0][:120]
+    return f"""
+    <article class="rounded-2xl border border-slate-800 bg-slate-950/50 p-4">
+      <div class="mb-3 flex items-center justify-between">
+        <div class="flex items-center gap-3">
+          <span class="rounded-xl bg-slate-800 p-2 text-slate-300"><i data-lucide="{icon}" class="h-5 w-5"></i></span>
+          <h3 class="font-black">{html.escape(name)}</h3>
+        </div>
+        <span class="h-3 w-3 rounded-full {color} shadow-lg"></span>
+      </div>
+      <p class="text-xs font-bold uppercase tracking-wide {text_color}">{state_label(state, label)}</p>
+      <p class="mt-2 min-h-10 text-xs leading-5 text-slate-400">{html.escape(clean_detail)}</p>
+    </article>
+    """
+
+
+def detail_card(title: str, icon: str, rows: list[tuple[str, object]]) -> str:
+    row_html = "\n".join(
+        f"""
+        <div class="rounded-xl border border-slate-800 bg-slate-950/50 p-3">
+          <p class="text-xs text-slate-500">{html.escape(str(label))}</p>
+          <p class="mt-1 break-words text-sm font-bold text-slate-200">{html.escape(str(value))}</p>
+        </div>
+        """
+        for label, value in rows
+    )
+    return f"""
+    <article class="rounded-2xl border border-slate-800 bg-panel/95 p-5 shadow-xl">
+      <div class="mb-4 flex items-center justify-between">
+        <h2 class="text-xl font-black">{html.escape(title)}</h2>
+        <i data-lucide="{icon}" class="h-6 w-6 text-lime-300"></i>
+      </div>
+      <div class="grid gap-3">{row_html}</div>
+    </article>
+    """
+
+
+def nvidia_blockers(report: dict) -> list[str]:
+    gpu = report.get("gpu_cuda", {})
+    readiness = report.get("nvidia_readiness", {})
+    blockers = []
+    if not gpu.get("cuda_usable"):
+        blockers.append("CUDA is not usable on this local machine.")
+    if not gpu.get("nvidia_smi_available"):
+        blockers.append("No NVIDIA GPU detected via nvidia-smi.")
+    if not readiness.get("docker_available"):
+        blockers.append("Docker is not available for future GPU worker deployment.")
+    if not report.get("ffmpeg_codecs", {}).get("gpu_encoding_available"):
+        blockers.append("NVENC is not usable locally; use CPU encoder on Qualcomm.")
+    return blockers
+
+
+def tone_palette(tone: str) -> dict[str, str]:
+    palettes = {
+        "lime": {"text": "text-lime-300", "soft": "bg-lime-300/10", "bar": "bg-lime-400"},
+        "orange": {"text": "text-orange-300", "soft": "bg-orange-300/10", "bar": "bg-orange-400"},
+        "red": {"text": "text-red-300", "soft": "bg-red-300/10", "bar": "bg-red-400"},
+        "sky": {"text": "text-sky-300", "soft": "bg-sky-300/10", "bar": "bg-sky-400"},
+    }
+    return palettes.get(tone, palettes["lime"])
+
+
+def state_label(state: str, fallback: str) -> str:
+    return {"ok": "Available", "missing": "Missing"}.get(state, fallback)
+
+
+def clamp_percent(value: object) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        number = 0.0
+    return max(0.0, min(100.0, number))
+
+
+def safe_float(value: object) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def list_jobs(output_root: Path) -> list[dict]:
