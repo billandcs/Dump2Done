@@ -602,8 +602,13 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
               </div>
             </div>
             <label class="grid gap-2">
-              <span class="text-sm font-bold text-slate-300" data-i18n="outputFolder">輸出資料夾</span>
-              <input name="imageOutputDirectory" value="output\exports\images" class="h-11 min-w-0 rounded-lg border border-white/10 bg-black/40 px-3 text-sm text-slate-100 outline-none focus:border-lime-300/70">
+              <span class="flex items-center justify-between gap-3">
+                <span class="text-sm font-bold text-slate-300" data-i18n="outputFolder">輸出資料夾</span>
+                <button id="imageOutputSettingsButton" class="inline-grid h-8 w-8 place-items-center rounded-lg border border-white/10 bg-black/25 text-slate-300 hover:border-lime-300/45 hover:text-lime-200" type="button" title="設定輸出資料夾" aria-label="設定輸出資料夾">
+                  <i data-lucide="settings" class="h-4 w-4"></i>
+                </button>
+              </span>
+              <input id="imageOutputDirectory" name="imageOutputDirectory" value="output\exports\images" class="h-11 min-w-0 rounded-lg border border-white/10 bg-black/40 px-3 text-sm text-slate-100 outline-none focus:border-lime-300/70">
             </label>
             <div class="flex flex-wrap gap-2">
               <button class="prompt-chip rounded-lg border border-lime-300/25 bg-lime-300/10 px-3 py-2 text-xs font-black text-lime-100 hover:bg-lime-300/20" type="button" data-prompt="往左旋轉90度">左轉90度</button>
@@ -884,7 +889,8 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         openDefaultOutputFolder: "開啟預設資料夾",
         settingsSaved: "設定已儲存。",
         settingsReset: "設定已重設。",
-        settingsButtonLabel: "偏好設定"
+        settingsButtonLabel: "偏好設定",
+        imageOutputSettingsLabel: "設定圖片輸出資料夾"
       },
       en: {
         localControlPlane: "Local Control Plane",
@@ -967,7 +973,8 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         openDefaultOutputFolder: "Open Default Folder",
         settingsSaved: "Settings saved.",
         settingsReset: "Settings reset.",
-        settingsButtonLabel: "Preferences"
+        settingsButtonLabel: "Preferences",
+        imageOutputSettingsLabel: "Set image output folder"
       },
       ja: {
         localControlPlane: "ローカル制御プレーン",
@@ -1050,7 +1057,8 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         openDefaultOutputFolder: "既定フォルダーを開く",
         settingsSaved: "設定を保存しました。",
         settingsReset: "設定をリセットしました。",
-        settingsButtonLabel: "設定"
+        settingsButtonLabel: "設定",
+        imageOutputSettingsLabel: "画像出力フォルダーを設定"
       }
     };
     let currentLocale = localStorage.getItem("dump2done.locale") || "zh-Hant";
@@ -1122,6 +1130,11 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         settingsButton.title = t("settingsButtonLabel");
         settingsButton.setAttribute("aria-label", t("settingsButtonLabel"));
       }
+      const imageOutputSettingsButton = document.getElementById("imageOutputSettingsButton");
+      if (imageOutputSettingsButton) {
+        imageOutputSettingsButton.title = t("imageOutputSettingsLabel");
+        imageOutputSettingsButton.setAttribute("aria-label", t("imageOutputSettingsLabel"));
+      }
     }
 
     function applySettingsToUi() {
@@ -1143,6 +1156,19 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       applySettingsToUi();
       document.getElementById("settingsHint").textContent = "";
       document.getElementById("settingsModal").classList.remove("hidden");
+    }
+
+    function openImageOutputSettings() {
+      const imageOutput = document.getElementById("imageOutputDirectory");
+      if (imageOutput && imageOutput.value.trim()) {
+        userSettings.defaultOutputDirectory = imageOutput.value.trim();
+      }
+      openSettingsModal();
+      const defaultOutput = document.getElementById("defaultOutputDirectory");
+      if (defaultOutput) {
+        defaultOutput.focus();
+        defaultOutput.select();
+      }
     }
 
     function closeSettingsModal() {
@@ -1322,6 +1348,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       updateEditorMode(currentMediaType);
     });
     document.getElementById("settingsButton").addEventListener("click", openSettingsModal);
+    document.getElementById("imageOutputSettingsButton").addEventListener("click", openImageOutputSettings);
     document.getElementById("closeSettings").addEventListener("click", closeSettingsModal);
     document.getElementById("settingsModal").addEventListener("click", event => {
       if (event.target.id === "settingsModal") closeSettingsModal();
