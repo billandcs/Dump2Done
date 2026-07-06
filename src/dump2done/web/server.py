@@ -40,6 +40,10 @@ TOOLTIPS = {
     "Qualcomm": "是否偵測到 Qualcomm / Snapdragon 類 CPU 平台。",
     "Python": "目前 Python 是否可能跑在 x64 模擬層。native ARM64 通常會更適合這台機器。",
     "Q Readiness": "Qualcomm-ready 程度。Q1 表示先走 CPU 穩定 pipeline，之後準備 QNN/DirectML。",
+    "AMD Readiness": "AMD-ready 程度。AM1 表示可做 AMD 平台開發，但 AMF/DirectML/ROCm 仍需實機驗證。",
+    "Intel Readiness": "Intel-ready 程度。I1 表示可做 Intel 平台開發，但 QSV/OpenVINO/DirectML 仍需實機驗證。",
+    "AMD": "偵測是否有 AMD CPU 或 Radeon/AMD GPU，未來可評估 AMF、DirectML、ROCm 路線。",
+    "Intel": "偵測是否有 Intel CPU/GPU/NPU 線索，未來可評估 Quick Sync、OpenVINO、DirectML 路線。",
     "QNN EP": "ONNX Runtime 的 Qualcomm NPU 執行後端，可讓合適的 ONNX 模型跑在 Hexagon NPU。不是所有模型都適合。",
     "DirectML EP": "ONNX Runtime 的 Windows GPU 執行後端，可作為 Qualcomm Adreno GPU 的未來 fallback。",
     "Encoder": "目前影片輸出編碼路線。這台機器本地先用 CPU libx264，不假設 NVENC。",
@@ -494,6 +498,8 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
             <select name="profile" class="h-11 rounded-lg border border-white/10 bg-black/40 px-3 text-sm text-slate-100 outline-none focus:border-sky-300/70">
               <option value="configs/default.yaml">default.yaml</option>
               <option value="configs/qualcomm_windows_arm64.yaml" selected>qualcomm_windows_arm64.yaml</option>
+              <option value="configs/amd_windows_directml.yaml">amd_windows_directml.yaml</option>
+              <option value="configs/intel_windows_openvino.yaml">intel_windows_openvino.yaml</option>
             </select>
           </label>
           <button class="mt-2 inline-flex h-12 items-center justify-center gap-2 rounded-lg bg-lime-300 px-4 text-sm font-black text-slate-950 hover:bg-lime-200" type="submit">
@@ -1120,16 +1126,24 @@ def render_timeline(manifest: dict) -> str:
 def render_platform_summary(env: dict) -> str:
     level = env.get("hardware_level", {})
     qualcomm = env.get("qualcomm_platform", {})
+    amd = env.get("amd_platform", {})
+    intel = env.get("intel_platform", {})
     q_ready = env.get("qualcomm_readiness", {})
+    amd_ready = env.get("amd_readiness", {})
+    intel_ready = env.get("intel_readiness", {})
     ffmpeg = env.get("ffmpeg_codecs", {})
     rows = [
         ("Hardware", level.get("level", "unknown")),
         ("Qualcomm", yes_no(qualcomm.get("is_qualcomm_cpu"))),
+        ("AMD", yes_no(amd.get("is_amd_cpu") or amd.get("is_amd_gpu"))),
+        ("Intel", yes_no(intel.get("is_intel_cpu") or intel.get("is_intel_gpu"))),
         ("Python", "x64 emulation" if qualcomm.get("likely_emulated_python") else "native"),
         ("Q Readiness", q_ready.get("tier", "unknown")),
+        ("AMD Readiness", amd_ready.get("tier", "unknown")),
+        ("Intel Readiness", intel_ready.get("tier", "unknown")),
         ("QNN EP", yes_no(qualcomm.get("qnn_execution_provider_available"))),
         ("DirectML EP", yes_no(qualcomm.get("directml_execution_provider_available"))),
-        ("Encoder", "CPU libx264" if not ffmpeg.get("gpu_encoding_available") else "GPU"),
+        ("Encoder", platform_encoder_summary(ffmpeg)),
     ]
     return '<div class="facts">' + "\n".join(render_fact(name, value) for name, value in rows) + "</div>"
 
@@ -1300,8 +1314,12 @@ def render_env_dashboard(report: dict) -> str:
     asr = report.get("asr", {})
     llm = report.get("llm", {})
     qualcomm = report.get("qualcomm_platform", {})
+    amd = report.get("amd_platform", {})
+    intel = report.get("intel_platform", {})
     q_ready = report.get("qualcomm_readiness", {})
     n_ready = report.get("nvidia_readiness", {})
+    amd_ready = report.get("amd_readiness", {})
+    intel_ready = report.get("intel_readiness", {})
     hardware = report.get("hardware_level", {})
 
     memory_used = clamp_percent(memory.get("percent_used"))
@@ -1380,7 +1398,7 @@ def render_env_dashboard(report: dict) -> str:
         </div>
         <h1 class="text-3xl font-black tracking-tight md:text-5xl">Platform Environment Report</h1>
         <p class="mt-2 max-w-3xl text-sm leading-6 text-slate-400">
-          即時診斷 Dump2Done 本地硬體、AI runtime、依賴元件與 Qualcomm / NVIDIA readiness。
+          即時診斷 Dump2Done 本地硬體、AI runtime、依賴元件與 Qualcomm / AMD / Intel / NVIDIA readiness。
         </p>
       </div>
       <div class="flex flex-wrap gap-2">
@@ -1401,6 +1419,8 @@ def render_env_dashboard(report: dict) -> str:
     <section class="mt-5 grid gap-5 lg:grid-cols-2">
       __NVIDIA_CARD__
       __QUALCOMM_CARD__
+      __AMD_CARD__
+      __INTEL_CARD__
     </section>
 
     <section class="mt-5 rounded-2xl border border-slate-800 bg-panel/95 p-5 shadow-xl">
@@ -1435,11 +1455,14 @@ def render_env_dashboard(report: dict) -> str:
         "__PYTHON_CARD__": env_summary_card("Python Runtime", basic.get("python", {}).get("version", "unknown"), "x64 emulation likely" if emulated else "native or non-ARM path", "terminal", "orange" if emulated else "lime"),
         "__NVIDIA_CARD__": readiness_card("NVIDIA Readiness", n_ready, nvidia_blockers(report), "gpu", "sky"),
         "__QUALCOMM_CARD__": readiness_card("Qualcomm Readiness", q_ready, q_ready.get("blockers", []), "cpu", "lime"),
+        "__AMD_CARD__": readiness_card("AMD Readiness", amd_ready, amd_ready.get("blockers", []), "circuit-board", "red"),
+        "__INTEL_CARD__": readiness_card("Intel Readiness", intel_ready, intel_ready.get("blockers", []), "microchip", "orange"),
         "__SOFTWARE_CARDS__": software_cards,
         "__CPU_CARD__": detail_card("CPU / OS", "cpu", [
             ("CPU", compute.get("cpu", {}).get("model", "unknown")),
             ("Threads", compute.get("cpu", {}).get("logical_threads", "unknown")),
             ("OS", f"{basic.get('os', {}).get('system', 'unknown')} {basic.get('os', {}).get('release', '')}"),
+            ("Video Controllers", ", ".join(amd.get("video_controllers") or intel.get("video_controllers") or []) or "unknown"),
         ]),
         "__AI_CARD__": detail_card("AI Runtime", "brain", [
             ("ASR", "faster-whisper installed" if asr.get("faster_whisper_installed") else "missing"),
@@ -1448,7 +1471,9 @@ def render_env_dashboard(report: dict) -> str:
         ]),
         "__RECOMMEND_CARD__": detail_card("Optimization Notes", "wrench", [
             ("Profile", qualcomm.get("recommended_local_profile", "default")),
-            ("Encoder", "CPU libx264/libx265" if not ffmpeg.get("gpu_encoding_available") else "GPU encoder available"),
+            ("AMD Profile", amd.get("recommended_local_profile", "default")),
+            ("Intel Profile", intel.get("recommended_local_profile", "default")),
+            ("Encoder", platform_encoder_summary(ffmpeg)),
             ("Next", "native ARM64 Python + ONNX Runtime QNN/DirectML validation" if emulated else "ASR and clip pipeline profiling"),
         ]),
     }
@@ -1598,9 +1623,23 @@ def nvidia_blockers(report: dict) -> list[str]:
         blockers.append("No NVIDIA GPU detected via nvidia-smi.")
     if not readiness.get("docker_available"):
         blockers.append("Docker is not available for future GPU worker deployment.")
-    if not report.get("ffmpeg_codecs", {}).get("gpu_encoding_available"):
-        blockers.append("NVENC is not usable locally; use CPU encoder on Qualcomm.")
+    if not report.get("ffmpeg_codecs", {}).get("platform_encoders", {}).get("nvidia_nvenc_usable"):
+        blockers.append("NVENC is not usable locally; use CPU or another platform encoder.")
     return blockers
+
+
+def platform_encoder_summary(ffmpeg: dict) -> str:
+    encoders = ffmpeg.get("platform_encoders", {})
+    usable = []
+    if encoders.get("nvidia_nvenc_usable"):
+        usable.append("NVENC")
+    if encoders.get("amd_amf_usable"):
+        usable.append("AMD AMF")
+    if encoders.get("intel_qsv_usable"):
+        usable.append("Intel QSV")
+    if usable:
+        return ", ".join(usable)
+    return "CPU libx264/libx265"
 
 
 def tone_palette(tone: str) -> dict[str, str]:
@@ -1847,7 +1886,12 @@ def create_preview_job(output_root: Path, payload: dict) -> dict:
         raise ValueError("Video File Path is required.")
     output_directory = str(payload.get("outputDirectory") or output_root).strip() or str(output_root)
     profile = str(payload.get("profile") or "configs/qualcomm_windows_arm64.yaml").strip()
-    allowed_profiles = {"configs/default.yaml", "configs/qualcomm_windows_arm64.yaml"}
+    allowed_profiles = {
+        "configs/default.yaml",
+        "configs/qualcomm_windows_arm64.yaml",
+        "configs/amd_windows_directml.yaml",
+        "configs/intel_windows_openvino.yaml",
+    }
     if profile not in allowed_profiles:
         raise ValueError("Unsupported profile.")
 
@@ -2053,8 +2097,17 @@ def render_fact(label: str, value: object) -> str:
 def platform_badge(env: dict) -> str:
     level = env.get("hardware_level", {}).get("level")
     q_ready = env.get("qualcomm_readiness", {}).get("tier")
+    amd_ready = env.get("amd_readiness", {}).get("tier")
+    intel_ready = env.get("intel_readiness", {}).get("tier")
+    nvidia_ready = env.get("nvidia_readiness", {}).get("tier")
     if level == "Q":
         return f"Qualcomm {q_ready or 'Q'}"
+    if level == "AM":
+        return f"AMD {amd_ready or 'AM'}"
+    if level == "I":
+        return f"Intel {intel_ready or 'I'}"
+    if level in {"A", "B", "C"}:
+        return f"NVIDIA {nvidia_ready or level}"
     return str(level or "Unknown")
 
 

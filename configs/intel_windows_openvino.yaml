@@ -1,0 +1,100 @@
+project:
+  name: Dump2Done
+  output_root: output/jobs
+  cache_mode: reuse
+  debug: true
+
+platform:
+  profile: intel_windows_openvino
+  accelerator_priority:
+    - cpu_int8
+    - openvino_future
+    - onnxruntime_directml_future
+  avoid:
+    - cuda_assumption
+    - nvenc_assumption
+    - tensorrt
+
+pipeline:
+  chunk_duration_sec: 240
+  max_parallel_workers: 1
+  resume: true
+
+media:
+  temp_dir: null
+  extract_audio_sample_rate: 16000
+  extract_audio_channels: 1
+
+asr:
+  backend: faster_whisper
+  model_size: small
+  device: cpu
+  compute_type: int8
+  word_timestamps: true
+  cpu_threads: 8
+  num_workers: 1
+
+llm:
+  backend: ollama
+  base_url: http://127.0.0.1:11434
+  model: llama3.1:8b-instruct-q4_K_M
+  structured_output: true
+  chunk_duration_sec: 240
+  top_n_candidates_per_chunk: 4
+  global_top_n: 4
+  min_duration: 20
+  max_duration: 75
+
+vision:
+  backend: center_crop
+  fallback_backend: openvino_future
+  detection_fps: 1
+  confidence_threshold: 0.5
+  smoothing:
+    method: ema
+    alpha: 0.25
+    dead_zone_ratio: 0.1
+    max_movement_ratio_per_sec: 0.25
+
+crop:
+  target_format: 9:16
+  strategy: center_crop_first
+  fallback: center_crop
+
+subtitles:
+  format: ass
+  language: auto
+  font_family: Microsoft JhengHei
+  font_size: auto
+  outline: 3
+  shadow: 1
+  max_chars_per_line_cjk: 12
+  max_words_per_line_en: 5
+  keyword_highlight: true
+
+render:
+  backend: ffmpeg
+  target_format: 9:16
+  fps: 30
+  resolution:
+    "9:16": [720, 1280]
+    "1:1": [720, 720]
+    "16:9": [1280, 720]
+  encoder_preference:
+    - h264_qsv
+    - hevc_qsv
+    - libx264
+  video_bitrate: 5M
+  audio_codec: aac
+  audio_bitrate: 160k
+
+future_acceleration:
+  openvino:
+    enabled: false
+    provider: OpenVINOExecutionProvider
+    note: Enable only after ONNX/OpenVINO model validation on this Intel driver stack.
+  onnxruntime:
+    directml:
+      enabled: false
+      provider: DmlExecutionProvider
+      note: Windows fallback for ONNX-compatible models.

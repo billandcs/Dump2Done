@@ -161,6 +161,35 @@ def get_cpu_model() -> str:
     return "unknown"
 
 
+def get_video_controllers() -> list[str]:
+    controllers: list[str] = []
+    if platform.system().lower() == "windows":
+        result = run_command(["wmic", "path", "win32_VideoController", "get", "name"], timeout=5)
+        if result.get("available") and result.get("stdout"):
+            lines = [line.strip() for line in result["stdout"].splitlines() if line.strip()]
+            controllers.extend(line for line in lines if line.lower() != "name")
+        if not controllers:
+            ps = run_command(
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-Command",
+                    "Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name",
+                ],
+                timeout=8,
+            )
+            if ps.get("available") and ps.get("stdout"):
+                controllers.extend(line.strip() for line in ps["stdout"].splitlines() if line.strip())
+    elif platform.system().lower() == "linux":
+        result = run_command(["lspci"], timeout=5)
+        if result.get("available") and result.get("stdout"):
+            for line in result["stdout"].splitlines():
+                lowered = line.lower()
+                if "vga" in lowered or "3d controller" in lowered or "display controller" in lowered:
+                    controllers.append(line.strip())
+    return sorted(set(controllers))
+
+
 def parse_first_line(text: str | None) -> str | None:
     if not text:
         return None
@@ -366,12 +395,30 @@ def check_ffmpeg_codecs() -> dict[str, Any]:
     encoder_text = (encoders.get("stdout") or "") + "\n" + (encoders.get("stderr") or "")
     decoder_text = (decoders.get("stdout") or "") + "\n" + (decoders.get("stderr") or "")
 
-    encoder_names = ["h264_nvenc", "hevc_nvenc", "av1_nvenc", "libx264", "libx265"]
+    encoder_names = [
+        "h264_nvenc",
+        "hevc_nvenc",
+        "av1_nvenc",
+        "h264_amf",
+        "hevc_amf",
+        "av1_amf",
+        "h264_qsv",
+        "hevc_qsv",
+        "av1_qsv",
+        "libx264",
+        "libx265",
+    ]
     decoder_names = ["h264_cuvid", "hevc_cuvid"]
     supported_encoders = {name: name in encoder_text for name in encoder_names}
     supported_decoders = {name: name in decoder_text for name in decoder_names}
     nvenc_build_available = any(
         supported_encoders.get(name) for name in ["h264_nvenc", "hevc_nvenc", "av1_nvenc"]
+    )
+    amf_build_available = any(
+        supported_encoders.get(name) for name in ["h264_amf", "hevc_amf", "av1_amf"]
+    )
+    qsv_build_available = any(
+        supported_encoders.get(name) for name in ["h264_qsv", "hevc_qsv", "av1_qsv"]
     )
 
     return {
@@ -380,19 +427,44 @@ def check_ffmpeg_codecs() -> dict[str, Any]:
         "encoders": supported_encoders,
         "decoders": supported_decoders,
         "nvenc_build_available": nvenc_build_available,
-        "gpu_encoding_available": nvenc_build_available,
+        "amf_build_available": amf_build_available,
+        "qsv_build_available": qsv_build_available,
+        "gpu_encoding_available": nvenc_build_available or amf_build_available or qsv_build_available,
+        "platform_encoders": {
+            "nvidia_nvenc": nvenc_build_available,
+            "amd_amf": amf_build_available,
+            "intel_qsv": qsv_build_available,
+        },
         "cpu_encoding_available": supported_encoders.get("libx264") or supported_encoders.get("libx265"),
         "recommendation": (
             "Prefer h264_nvenc for MVP exports; try hevc_nvenc for smaller files."
             if nvenc_build_available
+            else "Use available platform encoder (AMF/QSV) or libx264/libx265; validate output quality per machine."
+            if amf_build_available or qsv_build_available
             else "Use libx264/libx265 and expect render time to be a major bottleneck."
         ),
         "long_video_bottleneck": (
             "ASR, smart crop detection, and final render I/O will dominate; process clips/chunks."
-            if nvenc_build_available
+            if nvenc_build_available or amf_build_available or qsv_build_available
             else "CPU encoding plus ASR/CV will dominate; keep MVP clips short and cache artifacts."
         ),
     }
+
+
+def check_onnxruntime_runtime() -> dict[str, Any]:
+    onnxruntime = {
+        "installed": module_available("onnxruntime"),
+        "version": import_version("onnxruntime"),
+        "available_providers": [],
+    }
+    if onnxruntime["installed"]:
+        try:
+            import onnxruntime as ort  # type: ignore
+
+            onnxruntime["available_providers"] = list(ort.get_available_providers())
+        except Exception as exc:
+            onnxruntime["error"] = str(exc)
+    return onnxruntime
 
 
 def check_qualcomm_platform() -> dict[str, Any]:
@@ -408,19 +480,7 @@ def check_qualcomm_platform() -> dict[str, Any]:
     is_arm_python = python_machine.lower() in {"arm64", "aarch64"}
     likely_emulated_python = bool(is_arm_cpu and not is_arm_python)
 
-    onnxruntime = {
-        "installed": module_available("onnxruntime"),
-        "version": import_version("onnxruntime"),
-        "available_providers": [],
-    }
-    if onnxruntime["installed"]:
-        try:
-            import onnxruntime as ort  # type: ignore
-
-            onnxruntime["available_providers"] = list(ort.get_available_providers())
-        except Exception as exc:
-            onnxruntime["error"] = str(exc)
-
+    onnxruntime = check_onnxruntime_runtime()
     providers = onnxruntime.get("available_providers") or []
     qnn_env = {
         "QNN_SDK_ROOT": os.environ.get("QNN_SDK_ROOT"),
@@ -450,6 +510,89 @@ def check_qualcomm_platform() -> dict[str, Any]:
             "Keep NVIDIA profiles for future server deployment, not for this local Qualcomm development path.",
         ]
         if is_qualcomm
+        else [],
+    }
+
+
+def check_amd_platform() -> dict[str, Any]:
+    cpu_model = get_cpu_model()
+    controllers = get_video_controllers()
+    haystack = " ".join([cpu_model, os.environ.get("PROCESSOR_IDENTIFIER") or "", *controllers]).lower()
+    is_amd_cpu = any(token in (cpu_model or "").lower() for token in ["amd", "ryzen", "threadripper", "epyc"])
+    is_amd_gpu = any(
+        token in haystack
+        for token in ["radeon", "rx ", "vega", "amd radeon", "advanced micro devices"]
+    )
+    onnxruntime = check_onnxruntime_runtime()
+    providers = onnxruntime.get("available_providers") or []
+    rocm_candidates = {
+        "torch_hip_version": None,
+        "hipcc_available": run_command(["hipcc", "--version"], timeout=5).get("available", False),
+        "rocminfo_available": run_command(["rocminfo"], timeout=5).get("available", False),
+    }
+    if module_available("torch"):
+        try:
+            import torch  # type: ignore
+
+            rocm_candidates["torch_hip_version"] = getattr(torch.version, "hip", None)
+        except Exception as exc:
+            rocm_candidates["torch_error"] = str(exc)
+
+    return {
+        "is_amd_cpu": is_amd_cpu,
+        "is_amd_gpu": is_amd_gpu,
+        "cpu_model": cpu_model,
+        "video_controllers": controllers,
+        "onnxruntime": onnxruntime,
+        "directml_execution_provider_available": "DmlExecutionProvider" in providers,
+        "rocm_execution_provider_available": "ROCMExecutionProvider" in providers,
+        "rocm": rocm_candidates,
+        "recommended_local_profile": "amd_windows_directml" if is_amd_gpu or is_amd_cpu else "default",
+        "optimization_notes": [
+            "Prefer FFmpeg AMF encoders when available for render acceleration.",
+            "Use DirectML/ONNX Runtime for future ONNX-compatible vision or embedding models on Windows.",
+            "ROCm is useful on supported Linux AMD GPU systems; treat Windows ROCm as not generally available.",
+            "Keep ASR CPU int8 as a reliable baseline unless a tested GPU backend exists.",
+        ]
+        if is_amd_cpu or is_amd_gpu
+        else [],
+    }
+
+
+def check_intel_platform() -> dict[str, Any]:
+    cpu_model = get_cpu_model()
+    controllers = get_video_controllers()
+    haystack = " ".join([cpu_model, os.environ.get("PROCESSOR_IDENTIFIER") or "", *controllers]).lower()
+    is_intel_cpu = any(token in (cpu_model or "").lower() for token in ["intel", "core(tm)", "xeon", "ultra"])
+    is_intel_gpu = any(token in haystack for token in ["intel", "iris", "uhd graphics", "arc", "xe graphics"])
+    is_intel_npu_hint = any(token in haystack for token in ["npu", "ai boost"])
+    onnxruntime = check_onnxruntime_runtime()
+    providers = onnxruntime.get("available_providers") or []
+    openvino = {
+        "installed": module_available("openvino"),
+        "version": import_version("openvino"),
+        "mo_available": run_command(["mo", "--version"], timeout=5).get("available", False),
+        "benchmark_app_available": run_command(["benchmark_app", "--version"], timeout=5).get("available", False),
+    }
+
+    return {
+        "is_intel_cpu": is_intel_cpu,
+        "is_intel_gpu": is_intel_gpu,
+        "is_intel_npu_hint": is_intel_npu_hint,
+        "cpu_model": cpu_model,
+        "video_controllers": controllers,
+        "onnxruntime": onnxruntime,
+        "openvino": openvino,
+        "openvino_execution_provider_available": "OpenVINOExecutionProvider" in providers,
+        "directml_execution_provider_available": "DmlExecutionProvider" in providers,
+        "recommended_local_profile": "intel_windows_openvino" if is_intel_cpu or is_intel_gpu else "default",
+        "optimization_notes": [
+            "Prefer FFmpeg QSV encoders when available for Intel Quick Sync render acceleration.",
+            "Evaluate OpenVINO for ONNX-compatible vision, detection, and embedding models.",
+            "Use DirectML as a Windows fallback for supported GPU inference paths.",
+            "Keep CPU int8 ASR as the baseline until a tested OpenVINO/DirectML path is validated.",
+        ]
+        if is_intel_cpu or is_intel_gpu
         else [],
     }
 
@@ -542,6 +685,8 @@ def classify_hardware(report: dict[str, Any]) -> LevelDecision:
     cuda = bool(gpu.get("cuda_usable"))
     nvenc = bool(report["ffmpeg_codecs"].get("gpu_encoding_available"))
     qualcomm = report.get("qualcomm_platform", {})
+    amd = report.get("amd_platform", {})
+    intel = report.get("intel_platform", {})
 
     if qualcomm.get("is_qualcomm_cpu"):
         return LevelDecision(
@@ -602,6 +747,38 @@ def classify_hardware(report: dict[str, Any]) -> LevelDecision:
                 "output": "720x1280",
                 "encoder": "NVENC if available; otherwise libx264.",
                 "long_video": "Validate with 1-3 minute clips before full videos.",
+            },
+        )
+
+    if amd.get("is_amd_cpu") or amd.get("is_amd_gpu"):
+        return LevelDecision(
+            "AM",
+            "AMD platform: optimize CPU baseline now, validate AMF render and DirectML/ROCm model paths before relying on acceleration.",
+            {
+                "whisper_model": "small/medium CPU int8 first; GPU ASR only after backend validation",
+                "compute_type": "int8 baseline",
+                "llm": "Ollama or llama.cpp quantized model; external fallback for long jobs",
+                "smart_crop_detection_fps": "1-3 initially; prefer sparse detection plus interpolation",
+                "output": "720x1280 for MVP, 1080x1920 after AMF profiling",
+                "encoder": "Prefer AMF if detected and stable; fallback libx264/libx265",
+                "local_ai_acceleration": "Evaluate DirectML/ONNX Runtime; ROCm only on supported AMD GPU systems",
+                "long_video": "Chunk everything and cache artifacts; GPU encoder availability varies by driver/build.",
+            },
+        )
+
+    if intel.get("is_intel_cpu") or intel.get("is_intel_gpu"):
+        return LevelDecision(
+            "I",
+            "Intel platform: optimize CPU baseline now, validate Quick Sync render and OpenVINO/DirectML model paths.",
+            {
+                "whisper_model": "small/medium CPU int8 first; OpenVINO path after validation",
+                "compute_type": "int8 baseline",
+                "llm": "Ollama or llama.cpp quantized model; external fallback for long jobs",
+                "smart_crop_detection_fps": "1-3 initially; OpenVINO candidate for future vision models",
+                "output": "720x1280 for MVP, 1080x1920 after QSV profiling",
+                "encoder": "Prefer Intel QSV if detected and stable; fallback libx264/libx265",
+                "local_ai_acceleration": "Evaluate OpenVINOExecutionProvider and DirectML for ONNX-compatible models",
+                "long_video": "Chunk everything and cache artifacts; Quick Sync depends on driver/FFmpeg build.",
             },
         )
 
@@ -703,6 +880,115 @@ def classify_qualcomm_readiness(report: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def classify_amd_readiness(report: dict[str, Any]) -> dict[str, Any]:
+    amd = report.get("amd_platform", {})
+    ffmpeg = report.get("ffmpeg_codecs", {})
+    memory_gb = report["compute"]["memory"].get("total_gb") or 0
+    score = 0
+    score += 1 if amd.get("is_amd_cpu") else 0
+    score += 2 if amd.get("is_amd_gpu") else 0
+    score += 2 if ffmpeg.get("platform_encoders", {}).get("amd_amf") else 0
+    score += 2 if amd.get("directml_execution_provider_available") else 0
+    score += 2 if amd.get("rocm_execution_provider_available") or amd.get("rocm", {}).get("torch_hip_version") else 0
+    score += 1 if memory_gb >= 32 else 0
+
+    detected = amd.get("is_amd_cpu") or amd.get("is_amd_gpu")
+    if not detected:
+        tier = "N/A"
+        meaning = "Not an AMD platform."
+    elif score >= 6:
+        tier = "AM2"
+        meaning = "Strong AMD local candidate; AMF/DirectML or ROCm acceleration paths are visible."
+    elif score >= 3:
+        tier = "AM1"
+        meaning = "AMD development candidate; keep CPU baseline and validate AMF/DirectML before relying on it."
+    elif detected:
+        tier = "AM0"
+        meaning = "AMD hardware detected, but acceleration/runtime support is not ready yet."
+
+    blockers = []
+    if detected and not ffmpeg.get("platform_encoders", {}).get("amd_amf"):
+        blockers.append("FFmpeg AMF encoder was not detected; render may use CPU libx264/libx265.")
+    if detected and not amd.get("directml_execution_provider_available"):
+        blockers.append("ONNX Runtime DirectML provider is not available.")
+    if amd.get("is_amd_gpu") and not (
+        amd.get("rocm_execution_provider_available") or amd.get("rocm", {}).get("torch_hip_version")
+    ):
+        blockers.append("ROCm/HIP path is not available; this is expected on many Windows AMD systems.")
+
+    return {
+        "tier": tier,
+        "meaning": meaning,
+        "score": score,
+        "recommended_config": amd.get("recommended_local_profile"),
+        "blockers": blockers,
+    }
+
+
+def classify_intel_readiness(report: dict[str, Any]) -> dict[str, Any]:
+    intel = report.get("intel_platform", {})
+    ffmpeg = report.get("ffmpeg_codecs", {})
+    memory_gb = report["compute"]["memory"].get("total_gb") or 0
+    score = 0
+    score += 1 if intel.get("is_intel_cpu") else 0
+    score += 1 if intel.get("is_intel_gpu") else 0
+    score += 2 if ffmpeg.get("platform_encoders", {}).get("intel_qsv") else 0
+    score += 2 if intel.get("openvino_execution_provider_available") or intel.get("openvino", {}).get("installed") else 0
+    score += 1 if intel.get("directml_execution_provider_available") else 0
+    score += 1 if intel.get("is_intel_npu_hint") else 0
+    score += 1 if memory_gb >= 32 else 0
+
+    detected = intel.get("is_intel_cpu") or intel.get("is_intel_gpu")
+    if not detected:
+        tier = "N/A"
+        meaning = "Not an Intel platform."
+    elif score >= 6:
+        tier = "I2"
+        meaning = "Strong Intel local candidate; QSV/OpenVINO or DirectML paths are visible."
+    elif score >= 3:
+        tier = "I1"
+        meaning = "Intel development candidate; validate QSV/OpenVINO before relying on acceleration."
+    elif detected:
+        tier = "I0"
+        meaning = "Intel hardware detected, but acceleration/runtime support is not ready yet."
+
+    blockers = []
+    if detected and not ffmpeg.get("platform_encoders", {}).get("intel_qsv"):
+        blockers.append("FFmpeg Intel QSV encoder was not detected; render may use CPU libx264/libx265.")
+    if detected and not intel.get("openvino_execution_provider_available") and not intel.get("openvino", {}).get("installed"):
+        blockers.append("OpenVINO runtime/provider is not available.")
+    if detected and not intel.get("directml_execution_provider_available"):
+        blockers.append("ONNX Runtime DirectML provider is not available.")
+
+    return {
+        "tier": tier,
+        "meaning": meaning,
+        "score": score,
+        "recommended_config": intel.get("recommended_local_profile"),
+        "blockers": blockers,
+    }
+
+
+def update_ffmpeg_hardware_flags(report: dict[str, Any]) -> None:
+    ffmpeg = report["ffmpeg_codecs"]
+    encoders = ffmpeg.setdefault("platform_encoders", {})
+    nvidia_available = bool(report["gpu_cuda"].get("nvidia_smi_available"))
+    amd_available = bool(report.get("amd_platform", {}).get("is_amd_gpu"))
+    intel_available = bool(report.get("intel_platform", {}).get("is_intel_gpu") or report.get("intel_platform", {}).get("is_intel_cpu"))
+
+    encoders["nvidia_nvenc_usable"] = bool(encoders.get("nvidia_nvenc") and nvidia_available)
+    encoders["amd_amf_usable"] = bool(encoders.get("amd_amf") and amd_available)
+    encoders["intel_qsv_usable"] = bool(encoders.get("intel_qsv") and intel_available)
+    ffmpeg["gpu_encoding_available"] = bool(
+        encoders["nvidia_nvenc_usable"] or encoders["amd_amf_usable"] or encoders["intel_qsv_usable"]
+    )
+    if not encoders["nvidia_nvenc_usable"] and ffmpeg.get("nvenc_build_available"):
+        ffmpeg["nvidia_hardware_note"] = "NVENC encoders are present in this FFmpeg build, but no NVIDIA GPU was detected."
+    if not ffmpeg["gpu_encoding_available"]:
+        ffmpeg["recommendation"] = "Use libx264/libx265 locally; no usable platform GPU encoder was confirmed."
+        ffmpeg["long_video_bottleneck"] = "CPU encoding plus ASR/CV will dominate locally; keep MVP clips short and cache artifacts."
+
+
 def build_report(args: argparse.Namespace) -> dict[str, Any]:
     started = time.time()
     report: dict[str, Any] = {
@@ -714,21 +1000,13 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
     }
     report["gpu_cuda"] = check_gpu_cuda()
     report["ffmpeg_codecs"] = check_ffmpeg_codecs()
-    if not report["gpu_cuda"].get("nvidia_smi_available"):
-        report["ffmpeg_codecs"]["gpu_encoding_available"] = False
-        report["ffmpeg_codecs"][
-            "recommendation"
-        ] = "Use libx264/libx265 locally; NVENC requires NVIDIA hardware even if this FFmpeg build lists NVENC encoders."
-        report["ffmpeg_codecs"][
-            "long_video_bottleneck"
-        ] = "CPU encoding plus ASR/CV will dominate locally; keep Qualcomm MVP clips short and cache artifacts."
-        report["ffmpeg_codecs"][
-            "hardware_note"
-        ] = "NVENC encoders are present in this FFmpeg build, but no NVIDIA GPU was detected."
     report["asr"] = check_asr()
     report["llm"] = check_ollama(args.ollama_url)
     report["vision"] = check_vision()
     report["qualcomm_platform"] = check_qualcomm_platform()
+    report["amd_platform"] = check_amd_platform()
+    report["intel_platform"] = check_intel_platform()
+    update_ffmpeg_hardware_flags(report)
 
     decision = classify_hardware(report)
     report["hardware_level"] = {
@@ -738,6 +1016,8 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
     }
     report["nvidia_readiness"] = classify_nvidia_readiness(report)
     report["qualcomm_readiness"] = classify_qualcomm_readiness(report)
+    report["amd_readiness"] = classify_amd_readiness(report)
+    report["intel_readiness"] = classify_intel_readiness(report)
     report["elapsed_seconds"] = round(time.time() - started, 2)
     return report
 
@@ -750,6 +1030,10 @@ def print_human_summary(report: dict[str, Any]) -> None:
     ffmpeg = report["ffmpeg_codecs"]
     qualcomm = report["qualcomm_platform"]
     qualcomm_ready = report["qualcomm_readiness"]
+    amd = report["amd_platform"]
+    intel = report["intel_platform"]
+    amd_ready = report["amd_readiness"]
+    intel_ready = report["intel_readiness"]
 
     print("Dump2Done Environment Probe")
     print("===========================")
@@ -763,9 +1047,13 @@ def print_human_summary(report: dict[str, Any]) -> None:
         "Qualcomm: "
         f"{qualcomm['is_qualcomm_cpu']} | emulated Python likely: {qualcomm['likely_emulated_python']}"
     )
+    print(f"AMD: CPU {amd['is_amd_cpu']} | GPU {amd['is_amd_gpu']}")
+    print(f"Intel: CPU {intel['is_intel_cpu']} | GPU {intel['is_intel_gpu']} | NPU hint {intel['is_intel_npu_hint']}")
     print(f"Hardware Level: {level['level']} - {level['reason']}")
     print(f"NVIDIA Readiness: {nvidia['tier']} - {nvidia['meaning']}")
     print(f"Qualcomm Readiness: {qualcomm_ready['tier']} - {qualcomm_ready['meaning']}")
+    print(f"AMD Readiness: {amd_ready['tier']} - {amd_ready['meaning']}")
+    print(f"Intel Readiness: {intel_ready['tier']} - {intel_ready['meaning']}")
     print("")
     print("Recommendations:")
     for key, value in level["recommendations"].items():
