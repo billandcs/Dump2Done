@@ -477,6 +477,20 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       }
     };
   </script>
+  <style>
+    @keyframes d2d-audio-wave {
+      0%, 100% { transform: scaleY(0.32); opacity: 0.55; }
+      45% { transform: scaleY(1); opacity: 1; }
+    }
+    .audio-wave-bar {
+      animation: d2d-audio-wave 1s ease-in-out infinite;
+      transform-origin: center bottom;
+    }
+    .audio-wave-bar:nth-child(2) { animation-delay: 0.12s; }
+    .audio-wave-bar:nth-child(3) { animation-delay: 0.24s; }
+    .audio-wave-bar:nth-child(4) { animation-delay: 0.36s; }
+    .audio-wave-bar:nth-child(5) { animation-delay: 0.48s; }
+  </style>
 </head>
 <body class="min-h-screen bg-carbon text-slate-100 antialiased">
   <div class="fixed inset-0 -z-10 bg-[radial-gradient(circle_at_18%_12%,rgba(56,189,248,0.16),transparent_30%),radial-gradient(circle_at_82%_0%,rgba(132,204,22,0.13),transparent_28%),linear-gradient(180deg,#05070a,#080b10_38%,#05070a)]"></div>
@@ -490,16 +504,24 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         </span>
         <span>
           <span class="block text-xl font-black tracking-normal">Dump2Done</span>
-          <span class="flex items-center gap-2 text-xs font-semibold text-lime-300"><span class="h-2 w-2 rounded-full bg-lime-300"></span>Local Control Plane</span>
+          <span class="flex items-center gap-2 text-xs font-semibold text-lime-300"><span class="h-2 w-2 rounded-full bg-lime-300"></span><span data-i18n="localControlPlane">Local Control Plane</span></span>
         </span>
       </a>
       <nav class="flex items-center gap-2">
         <a href="/" class="inline-flex items-center gap-2 rounded-lg border border-sky-300/35 bg-sky-400/12 px-4 py-2 text-sm font-bold text-sky-100">
-          <i data-lucide="layout-dashboard" class="h-4 w-4"></i>控制台
+          <i data-lucide="layout-dashboard" class="h-4 w-4"></i><span data-i18n="dashboard">控制台</span>
         </a>
         <a href="/env" class="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-4 py-2 text-sm font-bold text-slate-200 hover:border-lime-300/40 hover:text-lime-200">
-          <i data-lucide="activity" class="h-4 w-4"></i>環境診斷
+          <i data-lucide="activity" class="h-4 w-4"></i><span data-i18n="environment">環境診斷</span>
         </a>
+        <label class="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm font-bold text-slate-200">
+          <i data-lucide="languages" class="h-4 w-4 text-lime-200"></i>
+          <select id="languageSelect" class="bg-transparent text-sm font-bold outline-none">
+            <option value="zh-Hant">繁中</option>
+            <option value="en">English</option>
+            <option value="ja">日本語</option>
+          </select>
+        </label>
       </nav>
     </div>
   </header>
@@ -510,7 +532,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         <div class="mb-5 flex items-start justify-between gap-3">
           <div>
             <p class="text-xs font-black uppercase tracking-[0.22em] text-orange-300">AI Media Editor</p>
-            <h1 class="mt-2 text-2xl font-black">上傳圖片或影片</h1>
+            <h1 class="mt-2 text-2xl font-black" data-i18n="uploadMedia">上傳圖片或影片</h1>
           </div>
           <span id="mediaTypePill" class="rounded-lg border border-lime-300/30 bg-lime-300/10 px-3 py-1 text-xs font-black text-lime-200">Auto Detect</span>
         </div>
@@ -519,8 +541,8 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
             <input id="mediaFile" name="mediaFile" type="file" accept="image/*,video/*" class="hidden" required>
             <span id="mediaEmptyState" class="grid gap-2">
               <i data-lucide="upload-cloud" class="mx-auto h-8 w-8 text-sky-300"></i>
-              <strong class="text-sm">上傳想要編輯的圖片或影片</strong>
-              <span class="text-xs text-slate-500">系統會自動判斷 image / video</span>
+              <strong class="text-sm" data-i18n="uploadMediaPrompt">上傳想要編輯的圖片或影片</strong>
+              <span class="text-xs text-slate-500" data-i18n="autoDetectHint">系統會自動判斷 image / video</span>
             </span>
             <span id="mediaPreviewState" class="hidden grid w-full min-w-0 gap-3">
               <span class="relative overflow-hidden rounded-lg border border-white/10 bg-black/40">
@@ -535,19 +557,19 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
             </span>
           </label>
           <label class="grid gap-2">
-            <span class="text-sm font-bold text-slate-300">編輯描述</span>
-            <textarea id="mediaPrompt" name="prompt" rows="7" class="resize-none rounded-lg border border-white/10 bg-black/30 px-3 py-3 text-sm leading-6 text-slate-100 outline-none focus:border-sky-300/70" placeholder="描述想做的圖片編輯，例如：往左旋轉90度、變亮一點、轉成黑白、銳化。"></textarea>
+            <span class="text-sm font-bold text-slate-300" data-i18n="editPrompt">編輯描述</span>
+            <textarea id="mediaPrompt" name="prompt" rows="7" class="resize-none rounded-lg border border-white/10 bg-black/30 px-3 py-3 text-sm leading-6 text-slate-100 outline-none focus:border-sky-300/70" placeholder="描述想做的圖片編輯，例如：往左旋轉90度、變亮一點、轉成黑白、銳化。" data-i18n-placeholder="imagePromptPlaceholder"></textarea>
           </label>
           <div id="imageOptions" class="hidden grid gap-3 rounded-xl border border-lime-300/20 bg-lime-300/[0.04] p-3">
             <div class="flex items-start gap-3">
               <i data-lucide="image-plus" class="mt-0.5 h-5 w-5 text-lime-200"></i>
               <div>
-                <p class="text-sm font-black text-lime-100">圖片模式</p>
-                <p class="mt-1 text-xs leading-5 text-slate-400">不需要 Profile 或解析度選單。上傳圖片、輸入指令，完成後會匯出 PNG 並在下方顯示完整路徑。</p>
+                <p class="text-sm font-black text-lime-100" data-i18n="imageMode">圖片模式</p>
+                <p class="mt-1 text-xs leading-5 text-slate-400" data-i18n="imageModeHelp">不需要 Profile 或解析度選單。上傳圖片、輸入指令，完成後會匯出 PNG 並在下方顯示完整路徑。</p>
               </div>
             </div>
             <label class="grid gap-2">
-              <span class="text-sm font-bold text-slate-300">輸出資料夾</span>
+              <span class="text-sm font-bold text-slate-300" data-i18n="outputFolder">輸出資料夾</span>
               <input name="imageOutputDirectory" value="output\exports\images" class="h-11 min-w-0 rounded-lg border border-white/10 bg-black/40 px-3 text-sm text-slate-100 outline-none focus:border-lime-300/70">
             </label>
             <div class="flex flex-wrap gap-2">
@@ -582,17 +604,17 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
           <div id="mediaResult" class="hidden min-w-0 overflow-hidden rounded-xl border border-sky-300/20 bg-sky-300/[0.05] p-3 text-xs text-slate-300">
             <div class="grid min-w-0 gap-3">
               <div class="min-w-0">
-                <p class="font-black text-sky-100">輸出完成</p>
+                <p class="font-black text-sky-100" data-i18n="outputComplete">輸出完成</p>
                 <p id="mediaResultPath" class="mt-1 break-all font-mono text-slate-300"></p>
               </div>
               <div class="grid grid-cols-2 gap-2">
-                <a id="mediaResultLink" class="rounded-lg border border-sky-300/30 px-3 py-2 text-center font-black text-sky-100 hover:bg-sky-300/10" href="#" target="_blank" rel="noopener">預覽成品</a>
-                <button id="openMediaResultFolder" class="rounded-lg border border-lime-300/30 px-3 py-2 font-black text-lime-100 hover:bg-lime-300/10" type="button">開啟資料夾</button>
+                <a id="mediaResultLink" class="rounded-lg border border-sky-300/30 px-3 py-2 text-center font-black text-sky-100 hover:bg-sky-300/10" href="#" target="_blank" rel="noopener" data-i18n="previewOutput">預覽成品</a>
+                <button id="openMediaResultFolder" class="rounded-lg border border-lime-300/30 px-3 py-2 font-black text-lime-100 hover:bg-lime-300/10" type="button" data-i18n="openFolder">開啟資料夾</button>
               </div>
             </div>
           </div>
           <button id="mediaSubmit" class="mt-2 inline-flex h-12 items-center justify-center gap-2 rounded-lg bg-lime-300 px-4 text-sm font-black text-slate-950 hover:bg-lime-200 disabled:cursor-not-allowed disabled:bg-slate-600 disabled:text-slate-300" type="submit">
-            <i data-lucide="sparkles" class="h-5 w-5"></i>建立 / 編輯
+            <i data-lucide="sparkles" class="h-5 w-5"></i><span data-i18n="createEdit">建立 / 編輯</span>
           </button>
           <p id="formHint" class="min-h-5 text-xs font-semibold text-slate-400"></p>
         </form>
@@ -600,7 +622,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
 
       <article class="min-w-0 overflow-hidden rounded-xl border border-white/10 bg-panel/92 p-5">
         <div class="mb-4 flex items-center justify-between">
-          <h2 class="text-lg font-black">任務佇列</h2>
+          <h2 class="text-lg font-black" data-i18n="jobQueue">任務佇列</h2>
           <button id="refreshJobs" class="rounded-lg border border-white/10 px-3 py-2 text-xs font-black text-slate-300 hover:border-sky-300/50">Refresh</button>
         </div>
         <div id="jobList" class="grid gap-3"></div>
@@ -611,13 +633,13 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       <article class="min-w-0 overflow-hidden rounded-xl border border-white/10 bg-panel/92 p-5">
         <div class="mb-5 flex flex-wrap items-center justify-between gap-3">
           <div>
-            <p class="text-xs font-black uppercase tracking-[0.22em] text-sky-300">Live Pipeline Tracker</p>
-            <h2 id="activeJobTitle" class="mt-2 text-2xl font-black">選擇任務</h2>
+            <p class="text-xs font-black uppercase tracking-[0.22em] text-sky-300" data-i18n="liveTracker">Live Pipeline Tracker</p>
+            <h2 id="activeJobTitle" class="mt-2 text-2xl font-black" data-i18n="selectJob">選擇任務</h2>
           </div>
           <div class="grid grid-cols-3 gap-2 text-center text-xs font-black">
-            <div class="rounded-lg border border-white/10 bg-white/5 px-3 py-2"><span id="statRunning" class="block text-lg text-sky-300">0</span>Running</div>
-            <div class="rounded-lg border border-white/10 bg-white/5 px-3 py-2"><span id="statDone" class="block text-lg text-lime-300">0</span>Done</div>
-            <div class="rounded-lg border border-white/10 bg-white/5 px-3 py-2"><span id="statQueue" class="block text-lg text-orange-300">0</span>Queue</div>
+            <div class="rounded-lg border border-white/10 bg-white/5 px-3 py-2"><span id="statRunning" class="block text-lg text-sky-300">0</span><span data-i18n="running">Running</span></div>
+            <div class="rounded-lg border border-white/10 bg-white/5 px-3 py-2"><span id="statDone" class="block text-lg text-lime-300">0</span><span data-i18n="done">Done</span></div>
+            <div class="rounded-lg border border-white/10 bg-white/5 px-3 py-2"><span id="statQueue" class="block text-lg text-orange-300">0</span><span data-i18n="queue">Queue</span></div>
           </div>
         </div>
         <div id="pipelineSteps" class="grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-4"></div>
@@ -626,10 +648,10 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       <article class="min-w-0 overflow-hidden rounded-xl border border-white/10 bg-panel/92 p-5">
         <div class="mb-4 flex items-center justify-between">
           <div>
-            <p class="text-xs font-black uppercase tracking-[0.22em] text-lime-300">Artifacts</p>
-            <h2 class="mt-2 text-xl font-black">產出物歷史畫廊</h2>
+            <p class="text-xs font-black uppercase tracking-[0.22em] text-lime-300" data-i18n="artifacts">Artifacts</p>
+            <h2 class="mt-2 text-xl font-black" data-i18n="galleryTitle">產出物歷史畫廊</h2>
           </div>
-          <span class="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs font-bold text-slate-300">圖片 / 影片 / 聲音</span>
+          <span class="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs font-bold text-slate-300" data-i18n="mediaOnly">圖片 / 影片 / 聲音</span>
         </div>
         <div id="gallery" class="grid gap-4 md:grid-cols-2 xl:grid-cols-3"></div>
       </article>
@@ -637,9 +659,9 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       <article class="overflow-hidden rounded-xl border border-white/10 bg-[#050608]">
         <div class="flex items-center justify-between border-b border-white/10 bg-white/[0.03] px-4 py-3">
           <div class="flex items-center gap-2 text-sm font-black text-slate-300">
-            <i data-lucide="square-terminal" class="h-4 w-4 text-sky-300"></i>Live Console Log
+            <i data-lucide="square-terminal" class="h-4 w-4 text-sky-300"></i><span data-i18n="liveConsole">Live Console Log</span>
           </div>
-          <button id="clearLog" class="rounded-md border border-white/10 px-2 py-1 text-xs font-bold text-slate-400 hover:text-slate-100">Clear</button>
+          <button id="clearLog" class="rounded-md border border-white/10 px-2 py-1 text-xs font-bold text-slate-400 hover:text-slate-100" data-i18n="clear">Clear</button>
         </div>
         <div id="consoleLog" class="h-64 overflow-auto p-4 font-mono text-[12px] leading-6 text-lime-100" role="log" aria-live="polite"></div>
       </article>
@@ -652,7 +674,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         <div class="flex items-center justify-between border-b border-white/10 px-4 py-3">
           <h2 id="mediaTitle" class="truncate pr-4 text-sm font-black text-slate-100">Media Preview</h2>
           <button onclick="closeMediaModal()" class="rounded-lg border border-white/10 px-3 py-2 text-xs font-black text-slate-300 hover:border-red-300/50 hover:text-red-200">
-            <i data-lucide="x" class="mr-1 inline h-3 w-3"></i>關閉
+            <i data-lucide="x" class="mr-1 inline h-3 w-3"></i><span data-i18n="close">關閉</span>
           </button>
         </div>
         <div class="p-4">
@@ -687,6 +709,199 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       running: "border-sky-300/40 bg-sky-300/10 text-sky-100",
       waiting: "border-white/10 bg-white/[0.03] text-slate-300"
     };
+    const I18N = {
+      "zh-Hant": {
+        localControlPlane: "Local Control Plane",
+        dashboard: "控制台",
+        environment: "環境診斷",
+        uploadMedia: "上傳圖片或影片",
+        uploadMediaPrompt: "上傳想要編輯的圖片或影片",
+        autoDetectHint: "系統會自動判斷 image / video",
+        editPrompt: "編輯描述",
+        imagePromptPlaceholder: "描述想做的圖片編輯，例如：往左旋轉90度、變亮一點、轉成黑白、銳化。",
+        videoPromptPlaceholder: "描述影片剪輯需求，例如：找出最精彩的30秒、加字幕、裁成直式短影音。",
+        genericPromptPlaceholder: "描述想做的編輯。選擇檔案後會自動切換圖片或影片模式。",
+        imageMode: "圖片模式",
+        imageModeHelp: "不需要 Profile 或解析度選單。上傳圖片、輸入指令，完成後會匯出 PNG 並在下方顯示完整路徑。",
+        outputFolder: "輸出資料夾",
+        outputComplete: "輸出完成",
+        previewOutput: "預覽成品",
+        openFolder: "開啟資料夾",
+        createEdit: "建立 / 編輯",
+        createImage: "建立圖片輸出",
+        createVideo: "建立影片剪輯任務",
+        jobQueue: "任務佇列",
+        selectJob: "選擇任務",
+        galleryTitle: "產出物歷史畫廊",
+        mediaOnly: "圖片 / 影片 / 聲音",
+        liveTracker: "即時工作流追蹤",
+        running: "執行中",
+        done: "完成",
+        queue: "佇列",
+        artifacts: "Artifacts",
+        liveConsole: "即時 Console Log",
+        clear: "Clear",
+        close: "關閉",
+        noJobs: "尚無真實任務。建立新任務後會出現在這裡。",
+        noVideoPath: "沒有影片路徑",
+        unknownProfile: "未知設定檔",
+        noTaskFlow: "建立第一個任務後會顯示流程。",
+        emptyGalleryTitle: "目前沒有可操作的真實產出物",
+        emptyGalleryHelp: "這裡只顯示真正產出的圖片、影片或聲音檔。JSON 報告與原始上傳素材會留在 job 資料夾內供除錯，不放進畫廊。",
+        created: "Created",
+        resolution: "Resolution",
+        previewImage: "預覽圖片",
+        playVideo: "播放影片",
+        playAudio: "播放音訊",
+        imageLabel: "image",
+        videoLabel: "video",
+        audioLabel: "audio",
+        audioHint: "點擊播放音訊",
+        unavailablePreview: "不可預覽",
+        noFile: "請先選擇圖片或影片。",
+        readingFile: "讀取檔案中...",
+        processing: "上傳並處理中...",
+        imageReadyHint: "圖片會立即以本地 Pillow 編輯並匯出到指定資料夾。",
+        videoReadyHint: "影片會建立 pipeline job，輸出會進入工作佇列。",
+        autoDetect: "Auto Detect",
+        imageEdit: "Image Edit",
+        videoPipeline: "Video Pipeline",
+        unknown: "Unknown"
+      },
+      en: {
+        localControlPlane: "Local Control Plane",
+        dashboard: "Dashboard",
+        environment: "Environment",
+        uploadMedia: "Upload Image or Video",
+        uploadMediaPrompt: "Upload an image or video to edit",
+        autoDetectHint: "The system will detect image / video automatically",
+        editPrompt: "Edit prompt",
+        imagePromptPlaceholder: "Describe the image edit, e.g. rotate left 90 degrees, brighten, grayscale, sharpen.",
+        videoPromptPlaceholder: "Describe the video edit, e.g. find the best 30 seconds, add captions, make a vertical short.",
+        genericPromptPlaceholder: "Describe the edit. The editor will switch modes after you choose a file.",
+        imageMode: "Image Mode",
+        imageModeHelp: "No profile or resolution menu is needed. Upload an image, enter a prompt, and the PNG output path will appear below.",
+        outputFolder: "Output Folder",
+        outputComplete: "Output Ready",
+        previewOutput: "Preview Output",
+        openFolder: "Open Folder",
+        createEdit: "Create / Edit",
+        createImage: "Create Image Output",
+        createVideo: "Create Video Job",
+        jobQueue: "Job Queue",
+        selectJob: "Select Job",
+        galleryTitle: "Output Gallery",
+        mediaOnly: "Images / Videos / Audio",
+        liveTracker: "Live Pipeline Tracker",
+        running: "Running",
+        done: "Done",
+        queue: "Queue",
+        artifacts: "Artifacts",
+        liveConsole: "Live Console Log",
+        clear: "Clear",
+        close: "Close",
+        noJobs: "No real jobs yet. New jobs will appear here.",
+        noVideoPath: "No video path",
+        unknownProfile: "unknown profile",
+        noTaskFlow: "Create the first job to see the pipeline flow.",
+        emptyGalleryTitle: "No playable outputs yet",
+        emptyGalleryHelp: "Only produced images, videos, or audio files appear here. JSON reports and original uploads stay in the job folder for debugging.",
+        created: "Created",
+        resolution: "Resolution",
+        previewImage: "Preview Image",
+        playVideo: "Play Video",
+        playAudio: "Play Audio",
+        imageLabel: "image",
+        videoLabel: "video",
+        audioLabel: "audio",
+        audioHint: "Click to play audio",
+        unavailablePreview: "Unavailable",
+        noFile: "Choose an image or video first.",
+        readingFile: "Reading file...",
+        processing: "Uploading and processing...",
+        imageReadyHint: "Images are edited locally with Pillow and exported to the selected folder.",
+        videoReadyHint: "Videos create a pipeline job and enter the queue.",
+        autoDetect: "Auto Detect",
+        imageEdit: "Image Edit",
+        videoPipeline: "Video Pipeline",
+        unknown: "Unknown"
+      },
+      ja: {
+        localControlPlane: "ローカル制御プレーン",
+        dashboard: "ダッシュボード",
+        environment: "環境診断",
+        uploadMedia: "画像または動画をアップロード",
+        uploadMediaPrompt: "編集したい画像または動画をアップロード",
+        autoDetectHint: "画像 / 動画を自動判定します",
+        editPrompt: "編集プロンプト",
+        imagePromptPlaceholder: "画像編集を入力します。例：左に90度回転、明るくする、白黒化、シャープ化。",
+        videoPromptPlaceholder: "動画編集を入力します。例：最高の30秒を探す、字幕を追加、縦型ショートにする。",
+        genericPromptPlaceholder: "編集内容を入力してください。ファイル選択後にモードを自動切替します。",
+        imageMode: "画像モード",
+        imageModeHelp: "Profile や解像度メニューは不要です。画像と指示を入力すると PNG を出力し、下にパスを表示します。",
+        outputFolder: "出力フォルダー",
+        outputComplete: "出力完了",
+        previewOutput: "出力をプレビュー",
+        openFolder: "フォルダーを開く",
+        createEdit: "作成 / 編集",
+        createImage: "画像出力を作成",
+        createVideo: "動画ジョブを作成",
+        jobQueue: "ジョブキュー",
+        selectJob: "ジョブを選択",
+        galleryTitle: "出力ギャラリー",
+        mediaOnly: "画像 / 動画 / 音声",
+        liveTracker: "リアルタイム処理フロー",
+        running: "実行中",
+        done: "完了",
+        queue: "キュー",
+        artifacts: "成果物",
+        liveConsole: "ライブ Console Log",
+        clear: "クリア",
+        close: "閉じる",
+        noJobs: "ジョブはまだありません。新しいジョブはここに表示されます。",
+        noVideoPath: "動画パスなし",
+        unknownProfile: "不明なプロファイル",
+        noTaskFlow: "最初のジョブを作成するとフローが表示されます。",
+        emptyGalleryTitle: "再生できる出力はまだありません",
+        emptyGalleryHelp: "ここには生成された画像、動画、音声のみ表示します。JSON レポートと元ファイルはデバッグ用にジョブフォルダーへ残します。",
+        created: "作成日時",
+        resolution: "解像度",
+        previewImage: "画像をプレビュー",
+        playVideo: "動画を再生",
+        playAudio: "音声を再生",
+        imageLabel: "画像",
+        videoLabel: "動画",
+        audioLabel: "音声",
+        audioHint: "クリックして音声を再生",
+        unavailablePreview: "プレビュー不可",
+        noFile: "先に画像または動画を選択してください。",
+        readingFile: "ファイルを読み込み中...",
+        processing: "アップロードして処理中...",
+        imageReadyHint: "画像は Pillow でローカル編集され、指定フォルダーへ出力されます。",
+        videoReadyHint: "動画は pipeline ジョブとしてキューに追加されます。",
+        autoDetect: "自動判定",
+        imageEdit: "画像編集",
+        videoPipeline: "動画 Pipeline",
+        unknown: "不明"
+      }
+    };
+    let currentLocale = localStorage.getItem("dump2done.locale") || "zh-Hant";
+
+    function t(key) {
+      return (I18N[currentLocale] && I18N[currentLocale][key]) || I18N["zh-Hant"][key] || key;
+    }
+
+    function applyLanguage() {
+      document.documentElement.lang = currentLocale;
+      document.querySelectorAll("[data-i18n]").forEach(node => {
+        node.textContent = t(node.dataset.i18n);
+      });
+      document.querySelectorAll("[data-i18n-placeholder]").forEach(node => {
+        node.setAttribute("placeholder", t(node.dataset.i18nPlaceholder));
+      });
+      const selector = document.getElementById("languageSelect");
+      if (selector) selector.value = currentLocale;
+    }
 
     function render() {
       renderStats();
@@ -694,6 +909,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       renderPipeline();
       renderGallery();
       renderLog();
+      applyLanguage();
       lucide.createIcons();
     }
 
@@ -708,7 +924,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       if (!jobs.length) {
         list.innerHTML = `
           <div class="rounded-lg border border-dashed border-white/15 bg-white/[0.03] p-4 text-sm text-slate-400">
-            尚無真實任務。建立新任務後會出現在這裡。
+            ${escapeHtml(t("noJobs"))}
           </div>
         `;
         return;
@@ -719,8 +935,8 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
             <strong class="truncate text-sm">${escapeHtml(job.id)}</strong>
             <span class="rounded-md px-2 py-1 text-[11px] font-black ${statusBadge(job.status)}">${escapeHtml(job.status)}</span>
           </div>
-          <p class="mt-2 truncate text-xs text-slate-400">${escapeHtml(job.videoPath || "No video path")}</p>
-          <p class="mt-1 text-xs font-bold text-slate-500">${escapeHtml(job.profile || "unknown profile")}</p>
+          <p class="mt-2 truncate text-xs text-slate-400">${escapeHtml(job.videoPath || t("noVideoPath"))}</p>
+          <p class="mt-1 text-xs font-bold text-slate-500">${escapeHtml(job.profile || t("unknownProfile"))}</p>
         </button>
       `).join("");
       document.querySelectorAll(".job-pick").forEach(button => {
@@ -734,10 +950,10 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
 
     function renderPipeline() {
       const job = jobs.find(item => item.id === activeJobId) || jobs[0];
-      document.getElementById("activeJobTitle").textContent = job ? `${job.id} · ${job.status}` : "尚無任務";
+      document.getElementById("activeJobTitle").textContent = job ? `${job.id} · ${job.status}` : t("selectJob");
       const target = document.getElementById("pipelineSteps");
       if (!job) {
-        target.innerHTML = `<p class="text-sm text-slate-400">建立第一個任務後會顯示流程。</p>`;
+        target.innerHTML = `<p class="text-sm text-slate-400">${escapeHtml(t("noTaskFlow"))}</p>`;
         return;
       }
       target.innerHTML = job.phases.map((phase, index) => `
@@ -767,8 +983,8 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
             <div class="flex items-start gap-3">
               <i data-lucide="archive-x" class="mt-1 h-6 w-6 text-orange-300"></i>
               <div>
-                <h3 class="font-black">目前沒有可操作的真實產出物</h3>
-                <p class="mt-2 text-sm leading-6 text-slate-400">這裡只顯示真正產出的圖片、影片或聲音檔。JSON 報告與原始上傳素材會留在 job 資料夾內供除錯，不放進畫廊。</p>
+                <h3 class="font-black">${escapeHtml(t("emptyGalleryTitle"))}</h3>
+                <p class="mt-2 text-sm leading-6 text-slate-400">${escapeHtml(t("emptyGalleryHelp"))}</p>
               </div>
             </div>
           </div>
@@ -778,21 +994,16 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       }
       grid.innerHTML = mediaGallery.map(item => `
         <article class="min-w-0 rounded-xl border border-white/10 bg-black/20 p-4">
-          <div class="mb-4 aspect-video rounded-lg border border-white/10 bg-gradient-to-br ${galleryGradient(item.accent)} p-3">
-            <div class="flex h-full items-end justify-between">
-              <span class="rounded-md bg-black/50 px-2 py-1 text-xs font-black text-white">${escapeHtml(item.duration)}</span>
-              <i data-lucide="${galleryIcon(item.kind)}" class="h-6 w-6 text-white/80"></i>
-            </div>
-          </div>
+          ${galleryPreview(item)}
           <h3 class="truncate font-black">${escapeHtml(item.fileName)}</h3>
           <p class="mt-1 truncate text-xs font-bold text-slate-500" title="${escapeAttr(item.relativePath)}">${escapeHtml(item.jobId)} · ${escapeHtml(item.relativePath)}</p>
           <dl class="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-400">
-            <div><dt class="font-bold text-slate-500">Created</dt><dd>${escapeHtml(item.createdAt)}</dd></div>
-            <div><dt class="font-bold text-slate-500">Resolution</dt><dd>${escapeHtml(item.resolution)}</dd></div>
+            <div><dt class="font-bold text-slate-500">${escapeHtml(t("created"))}</dt><dd>${escapeHtml(item.createdAt)}</dd></div>
+            <div><dt class="font-bold text-slate-500">${escapeHtml(t("resolution"))}</dt><dd>${escapeHtml(item.resolution)}</dd></div>
           </dl>
           <div class="mt-4 grid grid-cols-2 gap-2">
             ${primaryArtifactAction(item)}
-            <button class="rounded-lg border border-lime-300/30 px-3 py-2 text-xs font-black text-lime-100 hover:bg-lime-300/10" onclick="openFolderById('${escapeAttr(item.id)}')"><i data-lucide="folder-open" class="mr-1 inline h-3 w-3"></i>開啟資料夾</button>
+            <button class="rounded-lg border border-lime-300/30 px-3 py-2 text-xs font-black text-lime-100 hover:bg-lime-300/10" onclick="openFolderById('${escapeAttr(item.id)}')"><i data-lucide="folder-open" class="mr-1 inline h-3 w-3"></i>${escapeHtml(t("openFolder"))}</button>
           </div>
         </article>
       `).join("");
@@ -844,6 +1055,12 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       logLines.length = 0;
       renderLog();
     });
+    document.getElementById("languageSelect").addEventListener("change", event => {
+      currentLocale = event.target.value || "zh-Hant";
+      localStorage.setItem("dump2done.locale", currentLocale);
+      render();
+      updateEditorMode(currentMediaType);
+    });
     const mediaFileInput = document.getElementById("mediaFile");
     const dropZone = document.getElementById("dropZone");
     const mediaPrompt = document.getElementById("mediaPrompt");
@@ -893,9 +1110,9 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       clearUploadPreview();
       hideMediaResult();
       if (!file) {
-        pill.textContent = "Auto Detect";
-        name.textContent = "上傳想要編輯的圖片或影片";
-        hint.textContent = "系統會自動判斷 image / video";
+        pill.textContent = t("autoDetect");
+        name.textContent = t("uploadMediaPrompt");
+        hint.textContent = t("autoDetectHint");
         emptyState.classList.remove("hidden");
         previewState.classList.add("hidden");
         updateEditorMode("unknown");
@@ -903,7 +1120,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       }
       const detected = detectClientMediaType(file);
       updateEditorMode(detected);
-      pill.textContent = detected === "image" ? "Image Edit" : detected === "video" ? "Video Pipeline" : "Unknown";
+      pill.textContent = detected === "image" ? t("imageEdit") : detected === "video" ? t("videoPipeline") : t("unknown");
       name.textContent = file.name;
       hint.textContent = `${file.type || "unknown"} · ${formatBytes(file.size)}`;
       uploadPreviewUrl = URL.createObjectURL(file);
@@ -925,17 +1142,17 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       const form = event.currentTarget;
       const file = mediaFileInput.files && mediaFileInput.files[0];
       if (!file) {
-        document.getElementById("formHint").textContent = "請先選擇圖片或影片。";
+        document.getElementById("formHint").textContent = t("noFile");
         return;
       }
       const data = Object.fromEntries(new FormData(form).entries());
       const hint = document.getElementById("formHint");
       const submit = document.getElementById("mediaSubmit");
-      hint.textContent = "讀取檔案中...";
+      hint.textContent = t("readingFile");
       submit.disabled = true;
       try {
         const dataBase64 = await fileToBase64(file);
-        hint.textContent = "上傳並處理中...";
+        hint.textContent = t("processing");
         const response = await fetch("/api/media-jobs", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -977,20 +1194,20 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       if (mediaType === "image") {
         imageOptions.classList.remove("hidden");
         videoOptions.classList.add("hidden");
-        submit.innerHTML = `<i data-lucide="sparkles" class="h-5 w-5"></i>建立圖片輸出`;
-        mediaPrompt.placeholder = "描述想做的圖片編輯，例如：往左旋轉90度、變亮一點、轉成黑白、銳化。";
-        hint.textContent = "圖片會立即以本地 Pillow 編輯並匯出到指定資料夾。";
+        submit.innerHTML = `<i data-lucide="sparkles" class="h-5 w-5"></i>${escapeHtml(t("createImage"))}`;
+        mediaPrompt.placeholder = t("imagePromptPlaceholder");
+        hint.textContent = t("imageReadyHint");
       } else if (mediaType === "video") {
         imageOptions.classList.add("hidden");
         videoOptions.classList.remove("hidden");
-        submit.innerHTML = `<i data-lucide="sparkles" class="h-5 w-5"></i>建立影片剪輯任務`;
-        mediaPrompt.placeholder = "描述影片剪輯需求，例如：找出最精彩的30秒、加字幕、裁成直式短影音。";
-        hint.textContent = "影片會建立 pipeline job，輸出會進入工作佇列。";
+        submit.innerHTML = `<i data-lucide="sparkles" class="h-5 w-5"></i>${escapeHtml(t("createVideo"))}`;
+        mediaPrompt.placeholder = t("videoPromptPlaceholder");
+        hint.textContent = t("videoReadyHint");
       } else {
         imageOptions.classList.add("hidden");
         videoOptions.classList.remove("hidden");
-        submit.innerHTML = `<i data-lucide="sparkles" class="h-5 w-5"></i>建立 / 編輯`;
-        mediaPrompt.placeholder = "描述想做的編輯。選擇檔案後會自動切換圖片或影片模式。";
+        submit.innerHTML = `<i data-lucide="sparkles" class="h-5 w-5"></i>${escapeHtml(t("createEdit"))}`;
+        mediaPrompt.placeholder = t("genericPromptPlaceholder");
         hint.textContent = "";
       }
       lucide.createIcons();
@@ -1085,13 +1302,59 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       }
     }
 
+    function galleryPreview(item) {
+      const safeId = escapeAttr(item.id);
+      const safeUrl = escapeAttr(item.mediaUrl || "");
+      const safeName = escapeAttr(item.fileName || "");
+      const badge = escapeHtml(t(`${item.kind}Label`) || item.kind);
+      const duration = escapeHtml(item.duration || "");
+      if (item.kind === "image") {
+        return `
+          <button class="group relative mb-4 block aspect-video w-full overflow-hidden rounded-lg border border-white/10 bg-black/45 text-left" onclick="playArtifactById('${safeId}')" title="${safeName}">
+            <img src="${safeUrl}" class="h-full w-full object-contain transition duration-200 group-hover:scale-[1.02]" alt="${safeName}" loading="lazy">
+            <span class="absolute left-3 top-3 rounded-md bg-black/70 px-2 py-1 text-xs font-black text-white">${badge}</span>
+            <span class="absolute bottom-3 right-3 rounded-md bg-sky-300/90 px-2 py-1 text-xs font-black text-slate-950">${escapeHtml(t("previewImage"))}</span>
+          </button>
+        `;
+      }
+      if (item.kind === "video") {
+        return `
+          <button class="group relative mb-4 block aspect-video w-full overflow-hidden rounded-lg border border-white/10 bg-black text-left" onclick="playArtifactById('${safeId}')" title="${safeName}">
+            <video src="${safeUrl}" class="h-full w-full object-contain opacity-90 transition duration-200 group-hover:opacity-100" muted playsinline preload="metadata"></video>
+            <span class="absolute left-3 top-3 rounded-md bg-black/70 px-2 py-1 text-xs font-black text-white">${badge}</span>
+            <span class="absolute bottom-3 left-3 rounded-md bg-black/70 px-2 py-1 text-xs font-black text-white">${duration}</span>
+            <span class="absolute bottom-3 right-3 rounded-full bg-lime-300 p-2 text-slate-950"><i data-lucide="play" class="h-4 w-4"></i></span>
+          </button>
+        `;
+      }
+      return `
+        <button class="group relative mb-4 grid aspect-video w-full place-items-center overflow-hidden rounded-lg border border-white/10 bg-gradient-to-br ${galleryGradient(item.accent)} p-4 text-left" onclick="playArtifactById('${safeId}')" title="${safeName}">
+          <span class="absolute left-3 top-3 rounded-md bg-black/70 px-2 py-1 text-xs font-black text-white">${badge}</span>
+          <span class="grid gap-4 text-center">
+            <span class="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-black/45 text-lime-200 ring-1 ring-lime-300/30">
+              <i data-lucide="volume-2" class="h-7 w-7"></i>
+            </span>
+            <span class="mx-auto flex h-12 items-end gap-1.5 rounded-xl bg-black/30 px-4 py-2">
+              <span class="audio-wave-bar h-8 w-2 rounded-full bg-lime-300"></span>
+              <span class="audio-wave-bar h-10 w-2 rounded-full bg-sky-300"></span>
+              <span class="audio-wave-bar h-6 w-2 rounded-full bg-orange-300"></span>
+              <span class="audio-wave-bar h-11 w-2 rounded-full bg-lime-200"></span>
+              <span class="audio-wave-bar h-7 w-2 rounded-full bg-sky-200"></span>
+            </span>
+            <span class="text-sm font-black text-white">${escapeHtml(t("audioHint"))}</span>
+          </span>
+          <span class="absolute bottom-3 left-3 rounded-md bg-black/70 px-2 py-1 text-xs font-black text-white">${duration}</span>
+        </button>
+      `;
+    }
+
     function primaryArtifactAction(item) {
       if (item.kind === "video" || item.kind === "audio" || item.kind === "image") {
         const icon = item.kind === "audio" ? "volume-2" : item.kind === "image" ? "image" : "play";
-        const label = item.kind === "audio" ? "播放音訊" : item.kind === "image" ? "預覽圖片" : "本地播放";
-        return `<button class="rounded-lg border border-sky-300/30 px-3 py-2 text-xs font-black text-sky-100 hover:bg-sky-300/10" onclick="playArtifactById('${escapeAttr(item.id)}')"><i data-lucide="${icon}" class="mr-1 inline h-3 w-3"></i>${label}</button>`;
+        const label = item.kind === "audio" ? t("playAudio") : item.kind === "image" ? t("previewImage") : t("playVideo");
+        return `<button class="rounded-lg border border-sky-300/30 px-3 py-2 text-xs font-black text-sky-100 hover:bg-sky-300/10" onclick="playArtifactById('${escapeAttr(item.id)}')"><i data-lucide="${icon}" class="mr-1 inline h-3 w-3"></i>${escapeHtml(label)}</button>`;
       }
-      return `<button disabled class="cursor-not-allowed rounded-lg border border-white/10 px-3 py-2 text-xs font-black text-slate-500"><i data-lucide="ban" class="mr-1 inline h-3 w-3"></i>不可預覽</button>`;
+      return `<button disabled class="cursor-not-allowed rounded-lg border border-white/10 px-3 py-2 text-xs font-black text-slate-500"><i data-lucide="ban" class="mr-1 inline h-3 w-3"></i>${escapeHtml(t("unavailablePreview"))}</button>`;
     }
 
     function playArtifactById(artifactId) {
