@@ -22,6 +22,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
             artifact = query.get("path", [""])[0]
             self._send_html(render_artifact(self.output_root, job_id, artifact))
             return
+        if parsed.path == "/env":
+            self._send_html(render_env_report(self.output_root.parent / "env_report.json"))
+            return
         if parsed.path == "/health":
             self._send_json({"status": "ok"})
             return
@@ -52,6 +55,7 @@ def render_index(output_root: Path) -> str:
     cards = "\n".join(render_job_card(job) for job in jobs)
     if not cards:
         cards = '<section class="empty">No jobs yet. Run <code>python main.py analyze ...</code>.</section>'
+    env_card = render_env_card(output_root.parent / "env_report.json")
 
     return page(
         "Dump2Done Local Verification",
@@ -63,7 +67,7 @@ def render_index(output_root: Path) -> str:
           </div>
           <a class="button" href="/health">Health JSON</a>
         </header>
-        <main class="grid">{cards}</main>
+        <main class="grid">{env_card}{cards}</main>
         """,
     )
 
@@ -85,6 +89,27 @@ def render_artifact(output_root: Path, job_id: str, artifact: str) -> str:
           <div>
             <p class="eyebrow">Artifact</p>
             <h1>{html.escape(job_id)} / {html.escape(artifact)}</h1>
+          </div>
+          <a class="button" href="/">Back</a>
+        </header>
+        <main><pre>{html.escape(content)}</pre></main>
+        """,
+    )
+
+
+def render_env_report(env_report_path: Path) -> str:
+    if env_report_path.exists():
+        content = env_report_path.read_text(encoding="utf-8", errors="replace")
+    else:
+        content = "Environment report not found. Run: python check_env.py --output output/env_report.json"
+
+    return page(
+        "Environment Report",
+        f"""
+        <header>
+          <div>
+            <p class="eyebrow">Platform</p>
+            <h1>Environment Report</h1>
           </div>
           <a class="button" href="/">Back</a>
         </header>
@@ -148,6 +173,53 @@ def render_job_card(job: dict) -> str:
       <ul class="stages">{stage_items}</ul>
       <h3>Artifacts</h3>
       <ul class="artifacts">{artifact_items}</ul>
+    </article>
+    """
+
+
+def render_env_card(env_report_path: Path) -> str:
+    report = read_json_or_none(env_report_path)
+    if not report:
+        return """
+        <article class="card">
+          <div class="card-head">
+            <div>
+              <p class="eyebrow">Platform</p>
+              <h2>No Env Report</h2>
+            </div>
+            <span class="status">missing</span>
+          </div>
+          <p class="muted">Run <code>python check_env.py --output output/env_report.json</code>.</p>
+        </article>
+        """
+
+    level = report.get("hardware_level", {})
+    qualcomm = report.get("qualcomm_platform", {})
+    q_ready = report.get("qualcomm_readiness", {})
+    rows = [
+        ("Hardware level", level.get("level", "unknown")),
+        ("Qualcomm CPU", qualcomm.get("is_qualcomm_cpu", "unknown")),
+        ("Emulated Python", qualcomm.get("likely_emulated_python", "unknown")),
+        ("Q readiness", q_ready.get("tier", "unknown")),
+        ("QNN EP", qualcomm.get("qnn_execution_provider_available", "unknown")),
+        ("DirectML EP", qualcomm.get("directml_execution_provider_available", "unknown")),
+    ]
+    row_items = "\n".join(
+        f"<li><span>{html.escape(str(name))}</span><strong>{html.escape(str(value))}</strong></li>"
+        for name, value in rows
+    )
+    return f"""
+    <article class="card">
+      <div class="card-head">
+        <div>
+          <p class="eyebrow">Platform</p>
+          <h2>Environment</h2>
+        </div>
+        <span class="status">{html.escape(str(level.get("level", "unknown")))}</span>
+      </div>
+      <ul class="stages">{row_items}</ul>
+      <h3>Report</h3>
+      <ul class="artifacts"><li><a href="/env">output/env_report.json</a></li></ul>
     </article>
     """
 

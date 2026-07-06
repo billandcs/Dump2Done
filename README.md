@@ -16,6 +16,8 @@ Dump2Done is a local-first AI video post-production platform blueprint. Phase 1 
 - `src/dump2done/`: package layout for config, job artifacts, media analysis, and pipeline stages.
 - `pyproject.toml`: package metadata and optional MVP dependencies.
 - `dashboard.py`: local verification dashboard for generated job artifacts.
+- `configs/qualcomm_windows_arm64.yaml`: Qualcomm-first local profile for Windows on ARM development.
+- `docs/qualcomm_platform.md`: Qualcomm platform strategy and future ONNX Runtime QNN/DirectML plan.
 
 ## Run Environment Probe
 
@@ -32,3 +34,10 @@ python dashboard.py --port 8765
 ```
 
 Then open `http://127.0.0.1:8765/`.
+
+## Qualcomm Windows on ARM Profile
+
+```bash
+python main.py analyze --config configs/qualcomm_windows_arm64.yaml --input output/smoke_input.mp4 --job-id smoke_audio
+python main.py transcribe --config configs/qualcomm_windows_arm64.yaml --job-id smoke_audio
+```

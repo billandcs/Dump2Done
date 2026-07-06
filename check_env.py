@@ -370,25 +370,87 @@ def check_ffmpeg_codecs() -> dict[str, Any]:
     decoder_names = ["h264_cuvid", "hevc_cuvid"]
     supported_encoders = {name: name in encoder_text for name in encoder_names}
     supported_decoders = {name: name in decoder_text for name in decoder_names}
-    gpu_encode = any(supported_encoders.get(name) for name in ["h264_nvenc", "hevc_nvenc", "av1_nvenc"])
+    nvenc_build_available = any(
+        supported_encoders.get(name) for name in ["h264_nvenc", "hevc_nvenc", "av1_nvenc"]
+    )
 
     return {
         "encoders_query_available": encoders.get("available", False),
         "decoders_query_available": decoders.get("available", False),
         "encoders": supported_encoders,
         "decoders": supported_decoders,
-        "gpu_encoding_available": gpu_encode,
+        "nvenc_build_available": nvenc_build_available,
+        "gpu_encoding_available": nvenc_build_available,
         "cpu_encoding_available": supported_encoders.get("libx264") or supported_encoders.get("libx265"),
         "recommendation": (
             "Prefer h264_nvenc for MVP exports; try hevc_nvenc for smaller files."
-            if gpu_encode
+            if nvenc_build_available
             else "Use libx264/libx265 and expect render time to be a major bottleneck."
         ),
         "long_video_bottleneck": (
             "ASR, smart crop detection, and final render I/O will dominate; process clips/chunks."
-            if gpu_encode
+            if nvenc_build_available
             else "CPU encoding plus ASR/CV will dominate; keep MVP clips short and cache artifacts."
         ),
+    }
+
+
+def check_qualcomm_platform() -> dict[str, Any]:
+    cpu_model = get_cpu_model()
+    processor_identifier = os.environ.get("PROCESSOR_IDENTIFIER")
+    processor_architecture = os.environ.get("PROCESSOR_ARCHITECTURE")
+    processor_architew6432 = os.environ.get("PROCESSOR_ARCHITEW6432")
+    python_machine = platform.machine()
+    is_qualcomm = "qualcomm" in (cpu_model or "").lower() or "qualcomm" in (
+        processor_identifier or ""
+    ).lower()
+    is_arm_cpu = any(token in (cpu_model or "").lower() for token in ["arm", "aarch64"])
+    is_arm_python = python_machine.lower() in {"arm64", "aarch64"}
+    likely_emulated_python = bool(is_arm_cpu and not is_arm_python)
+
+    onnxruntime = {
+        "installed": module_available("onnxruntime"),
+        "version": import_version("onnxruntime"),
+        "available_providers": [],
+    }
+    if onnxruntime["installed"]:
+        try:
+            import onnxruntime as ort  # type: ignore
+
+            onnxruntime["available_providers"] = list(ort.get_available_providers())
+        except Exception as exc:
+            onnxruntime["error"] = str(exc)
+
+    providers = onnxruntime.get("available_providers") or []
+    qnn_env = {
+        "QNN_SDK_ROOT": os.environ.get("QNN_SDK_ROOT"),
+        "QAIRT_ROOT": os.environ.get("QAIRT_ROOT"),
+        "QUALCOMM_AI_ENGINE_DIRECT_SDK": os.environ.get("QUALCOMM_AI_ENGINE_DIRECT_SDK"),
+    }
+
+    return {
+        "is_qualcomm_cpu": is_qualcomm,
+        "is_arm_cpu": is_arm_cpu,
+        "cpu_model": cpu_model,
+        "python_machine": python_machine,
+        "processor_architecture": processor_architecture,
+        "processor_architew6432": processor_architew6432,
+        "processor_identifier": processor_identifier,
+        "likely_emulated_python": likely_emulated_python,
+        "native_arm64_python_recommended": bool(is_qualcomm and likely_emulated_python),
+        "onnxruntime": onnxruntime,
+        "qnn_execution_provider_available": "QNNExecutionProvider" in providers,
+        "directml_execution_provider_available": "DmlExecutionProvider" in providers,
+        "qnn_environment": qnn_env,
+        "recommended_local_profile": "qualcomm_windows_arm64" if is_qualcomm else "default",
+        "optimization_notes": [
+            "Prefer native ARM64 Python and ARM64 wheels when available.",
+            "Use CPU int8 faster-whisper for Phase 2; evaluate ONNX Runtime QNN/DirectML for future ONNX-compatible models.",
+            "Do not depend on CUDA, NVENC, TensorRT, or vLLM locally on this machine.",
+            "Keep NVIDIA profiles for future server deployment, not for this local Qualcomm development path.",
+        ]
+        if is_qualcomm
+        else [],
     }
 
 
@@ -401,7 +463,7 @@ def check_asr() -> dict[str, Any]:
         "faster_whisper_installed": fw_installed,
         "ctranslate2_installed": ct2_installed,
         "ctranslate2_version": ct2_version,
-        "planned_backends": ["faster-whisper", "WhisperX"],
+        "planned_backends": ["faster-whisper", "WhisperX", "onnxruntime-qnn-future"],
         "model_recommendations": {
             "high_vram": {"model": "large-v3 or distil-large-v3", "compute_type": "float16"},
             "mid_vram": {"model": "distil-large-v3 or medium", "compute_type": "int8_float16"},
@@ -479,6 +541,24 @@ def classify_hardware(report: dict[str, Any]) -> LevelDecision:
     max_vram = gpu.get("max_vram_gb") or 0
     cuda = bool(gpu.get("cuda_usable"))
     nvenc = bool(report["ffmpeg_codecs"].get("gpu_encoding_available"))
+    qualcomm = report.get("qualcomm_platform", {})
+
+    if qualcomm.get("is_qualcomm_cpu"):
+        return LevelDecision(
+            "Q",
+            "Qualcomm Windows on ARM platform: optimize for native ARM64, CPU int8, ONNX Runtime QNN/DirectML future paths.",
+            {
+                "whisper_model": "tiny/base/small first; medium only for short clips",
+                "compute_type": "int8",
+                "llm": "Ollama if stable, otherwise small quantized llama.cpp/OpenAI-compatible fallback",
+                "smart_crop_detection_fps": "0.5-2 initially; prefer sparse detection plus interpolation",
+                "output": "720x1280 for MVP validation, 1080x1920 only after profiling",
+                "encoder": "libx264/libx265 CPU; Qualcomm hardware encode requires a separate Media Foundation path later",
+                "local_ai_acceleration": "Evaluate ONNX Runtime QNNExecutionProvider and DirectML for ONNX-compatible models",
+                "python": "Use native ARM64 Python when possible; current x64 Python may run under emulation.",
+                "long_video": "Chunk everything; 30min+ is possible for pipeline validation but not high throughput yet.",
+            },
+        )
 
     if cuda and nvenc and max_vram >= 16 and memory_gb >= 32:
         return LevelDecision(
@@ -582,6 +662,47 @@ def classify_nvidia_readiness(report: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def classify_qualcomm_readiness(report: dict[str, Any]) -> dict[str, Any]:
+    qualcomm = report.get("qualcomm_platform", {})
+    memory_gb = report["compute"]["memory"].get("total_gb") or 0
+    score = 0
+    score += 2 if qualcomm.get("is_qualcomm_cpu") else 0
+    score += 1 if qualcomm.get("is_arm_cpu") else 0
+    score += 1 if not qualcomm.get("likely_emulated_python") else 0
+    score += 2 if qualcomm.get("qnn_execution_provider_available") else 0
+    score += 1 if qualcomm.get("directml_execution_provider_available") else 0
+    score += 1 if memory_gb >= 32 else 0
+
+    if score >= 6:
+        tier = "Q2"
+        meaning = "Strong Qualcomm local AI candidate with native/runtime acceleration available."
+    elif score >= 3:
+        tier = "Q1"
+        meaning = "Qualcomm-first development candidate; optimize CPU path now and prepare QNN/DirectML."
+    elif qualcomm.get("is_qualcomm_cpu"):
+        tier = "Q0"
+        meaning = "Qualcomm hardware detected, but native/runtime acceleration is not ready yet."
+    else:
+        tier = "N/A"
+        meaning = "Not a Qualcomm platform."
+
+    blockers = []
+    if qualcomm.get("likely_emulated_python"):
+        blockers.append("Native ARM64 Python is recommended.")
+    if qualcomm.get("is_qualcomm_cpu") and not qualcomm.get("qnn_execution_provider_available"):
+        blockers.append("ONNX Runtime QNN provider is not currently available.")
+    if qualcomm.get("is_qualcomm_cpu") and not qualcomm.get("directml_execution_provider_available"):
+        blockers.append("DirectML provider is not currently available.")
+
+    return {
+        "tier": tier,
+        "meaning": meaning,
+        "score": score,
+        "recommended_config": qualcomm.get("recommended_local_profile"),
+        "blockers": blockers,
+    }
+
+
 def build_report(args: argparse.Namespace) -> dict[str, Any]:
     started = time.time()
     report: dict[str, Any] = {
@@ -593,9 +714,21 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
     }
     report["gpu_cuda"] = check_gpu_cuda()
     report["ffmpeg_codecs"] = check_ffmpeg_codecs()
+    if not report["gpu_cuda"].get("nvidia_smi_available"):
+        report["ffmpeg_codecs"]["gpu_encoding_available"] = False
+        report["ffmpeg_codecs"][
+            "recommendation"
+        ] = "Use libx264/libx265 locally; NVENC requires NVIDIA hardware even if this FFmpeg build lists NVENC encoders."
+        report["ffmpeg_codecs"][
+            "long_video_bottleneck"
+        ] = "CPU encoding plus ASR/CV will dominate locally; keep Qualcomm MVP clips short and cache artifacts."
+        report["ffmpeg_codecs"][
+            "hardware_note"
+        ] = "NVENC encoders are present in this FFmpeg build, but no NVIDIA GPU was detected."
     report["asr"] = check_asr()
     report["llm"] = check_ollama(args.ollama_url)
     report["vision"] = check_vision()
+    report["qualcomm_platform"] = check_qualcomm_platform()
 
     decision = classify_hardware(report)
     report["hardware_level"] = {
@@ -604,6 +737,7 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
         "recommendations": decision.recommendations,
     }
     report["nvidia_readiness"] = classify_nvidia_readiness(report)
+    report["qualcomm_readiness"] = classify_qualcomm_readiness(report)
     report["elapsed_seconds"] = round(time.time() - started, 2)
     return report
 
@@ -614,6 +748,8 @@ def print_human_summary(report: dict[str, Any]) -> None:
     basic = report["basic"]
     gpu = report["gpu_cuda"]
     ffmpeg = report["ffmpeg_codecs"]
+    qualcomm = report["qualcomm_platform"]
+    qualcomm_ready = report["qualcomm_readiness"]
 
     print("Dump2Done Environment Probe")
     print("===========================")
@@ -623,8 +759,13 @@ def print_human_summary(report: dict[str, Any]) -> None:
     print(f"Git: {basic['git']['available']}")
     print(f"NVIDIA GPUs: {gpu['gpu_count']} | CUDA usable: {gpu['cuda_usable']} | max VRAM GB: {gpu['max_vram_gb']}")
     print(f"NVENC available: {ffmpeg['gpu_encoding_available']}")
+    print(
+        "Qualcomm: "
+        f"{qualcomm['is_qualcomm_cpu']} | emulated Python likely: {qualcomm['likely_emulated_python']}"
+    )
     print(f"Hardware Level: {level['level']} - {level['reason']}")
     print(f"NVIDIA Readiness: {nvidia['tier']} - {nvidia['meaning']}")
+    print(f"Qualcomm Readiness: {qualcomm_ready['tier']} - {qualcomm_ready['meaning']}")
     print("")
     print("Recommendations:")
     for key, value in level["recommendations"].items():
