@@ -921,9 +921,16 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
               <p class="text-xs font-black text-orange-200" data-i18n="onlineFeatureNoticeTitle">目前仍偏線上的能力</p>
               <p class="mt-2 text-xs leading-5 text-slate-400" data-i18n="onlineFeatureNoticeBody">高品質生成式影片改衣服、精準人物/衣服 segmentation + tracking、複雜 Agent 規劃目前先標為線上能力；未來會逐步改成本地 Ollama / ONNX / DirectML / QNN 能跑的模組。</p>
             </div>
+            <div id="computeHelpPanel" class="rounded-lg border border-white/10 bg-black/30 p-3">
+              <p class="text-xs font-black text-lime-200" data-i18n="computeHelpPanelTitle">設定說明</p>
+              <p id="computeHelpText" class="mt-2 text-xs leading-5 text-slate-400" data-i18n="computeHelpDefault">點擊欄位標題旁的問號，可以查看各項本地/線上運算設定的差別與未來用途。</p>
+            </div>
             <div class="grid gap-3 md:grid-cols-2">
               <label class="grid gap-2">
-                <span class="text-xs font-black uppercase tracking-wide text-slate-400" data-i18n="localLlmProvider">Local LLM Provider</span>
+                <span class="flex items-center gap-2 text-xs font-black uppercase tracking-wide text-slate-400">
+                  <span data-i18n="localLlmProvider">Local LLM Provider</span>
+                  <button class="compute-help grid h-5 w-5 place-items-center rounded-full border border-sky-300/35 bg-sky-300/10 text-[11px] font-black text-sky-100 hover:bg-sky-300/20" type="button" data-help-key="localLlmProviderHelp">?</button>
+                </span>
                 <select id="localLlmProvider" class="h-11 rounded-lg border border-white/10 bg-black/40 px-3 text-sm text-slate-100 outline-none focus:border-sky-300/70">
                   <option value="ollama_demo">Ollama local (demo)</option>
                   <option value="openai_online_placeholder">OpenAI online fallback (placeholder)</option>
@@ -931,11 +938,17 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
                 </select>
               </label>
               <label class="grid gap-2">
-                <span class="text-xs font-black uppercase tracking-wide text-slate-400" data-i18n="localLlmEndpoint">Local LLM Endpoint</span>
+                <span class="flex items-center gap-2 text-xs font-black uppercase tracking-wide text-slate-400">
+                  <span data-i18n="localLlmEndpoint">Local LLM Endpoint</span>
+                  <button class="compute-help grid h-5 w-5 place-items-center rounded-full border border-sky-300/35 bg-sky-300/10 text-[11px] font-black text-sky-100 hover:bg-sky-300/20" type="button" data-help-key="localLlmEndpointHelp">?</button>
+                </span>
                 <input id="localLlmEndpoint" class="h-11 rounded-lg border border-white/10 bg-black/40 px-3 text-sm text-slate-100 outline-none focus:border-sky-300/70" placeholder="http://127.0.0.1:11434">
               </label>
               <label class="grid gap-2">
-                <span class="text-xs font-black uppercase tracking-wide text-slate-400" data-i18n="visionProvider">Vision / Video Provider</span>
+                <span class="flex items-center gap-2 text-xs font-black uppercase tracking-wide text-slate-400">
+                  <span data-i18n="visionProvider">Vision / Video Provider</span>
+                  <button class="compute-help grid h-5 w-5 place-items-center rounded-full border border-sky-300/35 bg-sky-300/10 text-[11px] font-black text-sky-100 hover:bg-sky-300/20" type="button" data-help-key="visionProviderHelp">?</button>
+                </span>
                 <select id="visionProvider" class="h-11 rounded-lg border border-white/10 bg-black/40 px-3 text-sm text-slate-100 outline-none focus:border-sky-300/70">
                   <option value="local_pillow_mvp">Local Pillow / FFmpeg MVP</option>
                   <option value="onnx_directml_future">ONNX DirectML local future</option>
@@ -944,7 +957,10 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
                 </select>
               </label>
               <label class="grid gap-2">
-                <span class="text-xs font-black uppercase tracking-wide text-slate-400" data-i18n="asrProvider">Speech / ASR Provider</span>
+                <span class="flex items-center gap-2 text-xs font-black uppercase tracking-wide text-slate-400">
+                  <span data-i18n="asrProvider">Speech / ASR Provider</span>
+                  <button class="compute-help grid h-5 w-5 place-items-center rounded-full border border-sky-300/35 bg-sky-300/10 text-[11px] font-black text-sky-100 hover:bg-sky-300/20" type="button" data-help-key="asrProviderHelp">?</button>
+                </span>
                 <select id="asrProvider" class="h-11 rounded-lg border border-white/10 bg-black/40 px-3 text-sm text-slate-100 outline-none focus:border-sky-300/70">
                   <option value="faster_whisper_cpu_demo">Faster-Whisper CPU local</option>
                   <option value="onnx_asr_future">ONNX ASR local future</option>
@@ -953,7 +969,10 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
               </label>
             </div>
             <label class="grid gap-2">
-              <span class="text-xs font-black uppercase tracking-wide text-slate-400" data-i18n="onlineFallbackPolicy">Online Fallback Policy</span>
+              <span class="flex items-center gap-2 text-xs font-black uppercase tracking-wide text-slate-400">
+                <span data-i18n="onlineFallbackPolicy">Online Fallback Policy</span>
+                <button class="compute-help grid h-5 w-5 place-items-center rounded-full border border-orange-300/35 bg-orange-300/10 text-[11px] font-black text-orange-100 hover:bg-orange-300/20" type="button" data-help-key="onlineFallbackPolicyHelp">?</button>
+              </span>
               <select id="onlineFallbackPolicy" class="h-11 rounded-lg border border-white/10 bg-black/40 px-3 text-sm text-slate-100 outline-none focus:border-orange-300/70">
                 <option value="warn_only" data-i18n="fallbackWarnOnly">只提示，不自動送線上</option>
                 <option value="disabled" data-i18n="fallbackDisabled">完全關閉線上 fallback</option>
@@ -985,6 +1004,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
     let eventSource = null;
     let uploadPreviewUrl = null;
     let pendingDeleteId = "";
+    let activeComputeHelpKey = "";
     const logLines = [
       "[dashboard] Booted Dump2Done local control plane on http://127.0.0.1:8765/",
       "[runner] Qualcomm profile loaded: CPU int8, single worker, ffmpeg libx264",
@@ -1097,7 +1117,15 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         fallbackWarnOnly: "只提示，不自動送線上",
         fallbackDisabled: "完全關閉線上 fallback",
         fallbackAskEachTime: "每次詢問後才使用線上",
-        onlineFallbackHelp: "演示設定：目前不會真的呼叫線上服務，只用來規劃未來任務路由。"
+        onlineFallbackHelp: "演示設定：目前不會真的呼叫線上服務，只用來規劃未來任務路由。",
+        computeHelpPanelTitle: "設定說明",
+        computeHelpDefault: "點擊欄位標題旁的問號，可以查看各項本地/線上運算設定的差別與未來用途。",
+        helpButtonLabel: "查看此設定說明",
+        localLlmProviderHelp: "決定文字理解、任務規劃、prompt 解析要交給誰。Ollama local 代表未來走本機 LLM；OpenAI online fallback 代表遇到本機模型做不到的語意規劃時，先提示再考慮線上；None 則關閉這類 LLM 路由。目前是演示，不會真的呼叫模型。",
+        localLlmEndpointHelp: "本地 LLM 服務網址，例如 Ollama 預設是 http://127.0.0.1:11434。未來後端會用它檢查模型列表、送出結構化 prompt、取得剪輯或編輯計畫。現在只保存設定，不會主動連線。",
+        visionProviderHelp: "決定圖片/影片視覺處理走哪條路。Local Pillow / FFmpeg MVP 是目前已能本地輸出的基礎版；ONNX DirectML 與 Qualcomm QNN 是未來把 segmentation、tracking、影像模型搬到本機 GPU/NPU 的路線；Online video edit placeholder 代表高品質生成式影片編輯目前仍偏線上。",
+        asrProviderHelp: "決定語音辨識來源。Faster-Whisper CPU local 是目前可在本機跑的路線；ONNX ASR future 是未來優化到本地加速後端；Online ASR placeholder 代表雲端備援。差別在速度、隱私、模型品質與硬體需求。",
+        onlineFallbackPolicyHelp: "控制遇到本地資源做不到時是否可使用線上服務。只提示代表系統只告知需要線上能力，不會自動送出；完全關閉代表永遠不走線上；每次詢問代表未來需要你確認後才會送出。"
       },
       en: {
         localControlPlane: "Local Control Plane",
@@ -1195,7 +1223,15 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         fallbackWarnOnly: "Warn only, never auto-send online",
         fallbackDisabled: "Disable online fallback",
         fallbackAskEachTime: "Ask every time before online use",
-        onlineFallbackHelp: "Demo setting: no online service is called yet. This only shapes future task routing."
+        onlineFallbackHelp: "Demo setting: no online service is called yet. This only shapes future task routing.",
+        computeHelpPanelTitle: "Setting Help",
+        computeHelpDefault: "Click the question mark next to a label to see what each local/online compute setting means.",
+        helpButtonLabel: "Show help for this setting",
+        localLlmProviderHelp: "Chooses who handles text reasoning, task planning, and prompt parsing. Ollama local means a future local LLM route; OpenAI online fallback means online help can be suggested when local planning is not enough; None disables this LLM route. This is demo-only for now.",
+        localLlmEndpointHelp: "The local LLM service URL. Ollama commonly uses http://127.0.0.1:11434. Later the backend can use this to inspect models, send structured prompts, and receive edit plans. For now it is only saved.",
+        visionProviderHelp: "Chooses the image/video processing route. Local Pillow / FFmpeg MVP is the current local output path. ONNX DirectML and Qualcomm QNN are future local GPU/NPU acceleration paths for segmentation, tracking, and vision models. Online video edit placeholder means high-quality generative video editing is still online-leaning.",
+        asrProviderHelp: "Chooses the speech recognition route. Faster-Whisper CPU local is the current local option; ONNX ASR future is a future accelerated local backend; Online ASR placeholder is cloud fallback. The tradeoffs are speed, privacy, quality, and hardware needs.",
+        onlineFallbackPolicyHelp: "Controls whether online services may be used when local resources cannot complete a task. Warn only never auto-sends; disabled blocks online fallback; ask each time means future online use requires your confirmation."
       },
       ja: {
         localControlPlane: "ローカル制御プレーン",
@@ -1293,7 +1329,15 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         fallbackWarnOnly: "警告のみ、自動オンライン送信なし",
         fallbackDisabled: "オンライン fallback を無効化",
         fallbackAskEachTime: "オンライン利用前に毎回確認",
-        onlineFallbackHelp: "デモ設定：現時点ではオンラインサービスを呼び出しません。将来のタスクルーティング用です。"
+        onlineFallbackHelp: "デモ設定：現時点ではオンラインサービスを呼び出しません。将来のタスクルーティング用です。",
+        computeHelpPanelTitle: "設定ヘルプ",
+        computeHelpDefault: "ラベル横の ? をクリックすると、各ローカル/オンライン計算設定の意味を確認できます。",
+        helpButtonLabel: "この設定の説明を見る",
+        localLlmProviderHelp: "テキスト理解、タスク計画、prompt 解析をどこで処理するかを決めます。Ollama local は将来のローカル LLM ルート、OpenAI online fallback はローカルで不足する場合のオンライン候補、None は LLM ルート無効です。現在はデモです。",
+        localLlmEndpointHelp: "ローカル LLM サービスの URL です。Ollama は通常 http://127.0.0.1:11434 を使います。将来はモデル一覧確認、構造化 prompt、編集計画の取得に使います。今は保存のみです。",
+        visionProviderHelp: "画像/動画処理ルートを決めます。Local Pillow / FFmpeg MVP は現在のローカル出力ルート。ONNX DirectML と Qualcomm QNN は segmentation、tracking、Vision モデルをローカル GPU/NPU へ移す将来ルート。Online video edit placeholder は高品質生成式動画編集がまだオンライン寄りであることを示します。",
+        asrProviderHelp: "音声認識ルートを決めます。Faster-Whisper CPU local は現在のローカル選択肢、ONNX ASR future は将来の高速化ローカル backend、Online ASR placeholder はクラウド fallback です。速度、プライバシー、品質、必要ハードウェアが違います。",
+        onlineFallbackPolicyHelp: "ローカル資源だけではできない場合にオンラインサービスを使えるかを制御します。警告のみは自動送信なし、無効化はオンライン禁止、毎回確認は将来オンライン利用前に確認します。"
       }
     };
     let currentLocale = localStorage.getItem("dump2done.locale") || "zh-Hant";
@@ -1375,6 +1419,30 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         imageOutputSettingsButton.title = t("imageOutputSettingsLabel");
         imageOutputSettingsButton.setAttribute("aria-label", t("imageOutputSettingsLabel"));
       }
+      document.querySelectorAll(".compute-help").forEach(button => {
+        const helpText = t(button.dataset.helpKey);
+        button.title = helpText;
+        button.setAttribute("aria-label", `${t("helpButtonLabel")}: ${helpText}`);
+      });
+      if (activeComputeHelpKey) {
+        showComputeHelp(activeComputeHelpKey);
+      }
+    }
+
+    function showComputeHelp(helpKey) {
+      activeComputeHelpKey = helpKey;
+      const panel = document.getElementById("computeHelpPanel");
+      const text = document.getElementById("computeHelpText");
+      if (!panel || !text) return;
+      text.textContent = t(helpKey);
+      panel.classList.remove("border-white/10", "bg-black/30");
+      panel.classList.add("border-lime-300/30", "bg-lime-300/[0.06]");
+      document.querySelectorAll(".compute-help").forEach(button => {
+        const active = button.dataset.helpKey === helpKey;
+        button.classList.toggle("border-lime-300/60", active);
+        button.classList.toggle("bg-lime-300/20", active);
+        button.classList.toggle("text-lime-100", active);
+      });
     }
 
     function applySettingsToUi() {
@@ -1602,6 +1670,12 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
     document.getElementById("closeSettings").addEventListener("click", closeSettingsModal);
     document.getElementById("settingsModal").addEventListener("click", event => {
       if (event.target.id === "settingsModal") closeSettingsModal();
+    });
+    document.getElementById("settingsForm").addEventListener("click", event => {
+      const helpButton = event.target.closest(".compute-help");
+      if (!helpButton) return;
+      event.preventDefault();
+      showComputeHelp(helpButton.dataset.helpKey);
     });
     document.addEventListener("keydown", event => {
       if (event.key === "Escape") closeSettingsModal();
