@@ -27,7 +27,7 @@ SRC_ROOT = Path(__file__).resolve().parents[2]
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-from dump2done.pipeline.video_edit import run_local_video_edit
+from dump2done.pipeline.video_edit import VideoEditCancelled, run_local_video_edit
 
 
 STAGE_LABELS = [
@@ -186,6 +186,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
             try:
                 payload = self._read_json_body()
                 response = delete_artifact_request(self.output_root, payload)
+                self._send_json(response)
+            except ValueError as exc:
+                self._send_json({"status": "error", "message": str(exc)}, status=400)
+            except Exception as exc:
+                self._send_json({"status": "error", "message": str(exc)}, status=500)
+            return
+        if parsed.path == "/api/cancel-job":
+            try:
+                payload = self._read_json_body()
+                response = cancel_job_request(self.output_root, payload)
                 self._send_json(response)
             except ValueError as exc:
                 self._send_json({"status": "error", "message": str(exc)}, status=400)
@@ -474,10 +484,13 @@ def run_video_edit_worker(output_root: Path, job_id: str) -> None:
         prompt = str(request.get("prompt") or "")
         resolution = str(config.get("resolution") or request.get("resolution") or "original")
 
+        clear_job_cancel_request(job_dir)
         set_manifest_status(job_dir, "running")
         publish_pipeline_log(job_id, "[video-edit] starting local runner")
 
         def on_stage(stage_name: str, stage_status: str, progress: int) -> None:
+            if is_job_cancel_requested(job_dir):
+                raise VideoEditCancelled("User cancelled this video edit job.")
             mark_manifest_stage(job_dir, stage_name, stage_status)
             frontend_step = VIDEO_EDIT_STAGE_TO_FRONTEND.get(stage_name, stage_name)
             publish_pipeline_status(job_id, frontend_step, stage_status, progress)
@@ -489,6 +502,7 @@ def run_video_edit_worker(output_root: Path, job_id: str) -> None:
             resolution=resolution,
             log=lambda message: publish_pipeline_log(job_id, message),
             stage=on_stage,
+            should_cancel=lambda: is_job_cancel_requested(job_dir),
         )
         manifest = read_json_or_none(job_dir / "job_manifest.json") or {}
         manifest["status"] = "completed"
@@ -497,6 +511,8 @@ def run_video_edit_worker(output_root: Path, job_id: str) -> None:
         manifest.setdefault("reports", {})["video_edit"] = "reports/video_edit.json"
         write_json_file(job_dir / "job_manifest.json", manifest)
         publish_pipeline_log(job_id, "[video-edit] gallery refresh is ready")
+    except VideoEditCancelled as exc:
+        mark_video_job_cancelled(job_dir, job_id, str(exc))
     except Exception as exc:
         mark_video_job_failed(job_dir, job_id, exc)
     finally:
@@ -541,6 +557,40 @@ def mark_video_job_failed(job_dir: Path, job_id: str, exc: Exception) -> None:
     )
     publish_pipeline_status(job_id, "vision", "failed", 0)
     publish_pipeline_log(job_id, f"[video-edit] failed: {exc}")
+
+
+def mark_video_job_cancelled(job_dir: Path, job_id: str, message: str = "User cancelled this job.") -> None:
+    manifest = read_json_or_none(job_dir / "job_manifest.json") or {}
+    manifest["status"] = "cancelled"
+    stages = manifest.setdefault("stages", {})
+    for stage_name, stage_status in list(stages.items()):
+        if stage_status == "running":
+            stages[stage_name] = "cancelled"
+    manifest["updated_at"] = now_utc()
+    manifest.setdefault("events", []).append({"type": "cancelled", "message": message, "created_at": now_utc()})
+    write_json_file(job_dir / "job_manifest.json", manifest)
+    write_json_file(
+        job_dir / "reports/cancelled.json",
+        {
+            "schema_version": "1.0",
+            "status": "cancelled",
+            "message": message,
+            "created_at": now_utc(),
+        },
+    )
+    publish_pipeline_status(job_id, "vision", "cancelled", 0)
+    publish_pipeline_log(job_id, f"[video-edit] cancelled: {message}")
+    clear_job_cancel_request(job_dir)
+
+
+def is_job_cancel_requested(job_dir: Path) -> bool:
+    return (job_dir / "reports/cancel_requested.json").exists()
+
+
+def clear_job_cancel_request(job_dir: Path) -> None:
+    cancel_path = job_dir / "reports/cancel_requested.json"
+    if cancel_path.exists():
+        cancel_path.unlink()
 
 
 def drain_pipeline_event_queue(limit: int = 100) -> list[dict]:
@@ -656,6 +706,25 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
     .audio-wave-bar:nth-child(3) { animation-delay: 0.24s; }
     .audio-wave-bar:nth-child(4) { animation-delay: 0.36s; }
     .audio-wave-bar:nth-child(5) { animation-delay: 0.48s; }
+    @keyframes d2d-flow {
+      0% { transform: translateX(-40%); }
+      100% { transform: translateX(120%); }
+    }
+    @keyframes d2d-live-card {
+      0%, 100% { box-shadow: 0 0 0 rgba(56, 189, 248, 0); }
+      50% { box-shadow: 0 0 34px rgba(56, 189, 248, 0.18); }
+    }
+    .pipeline-card-running {
+      animation: d2d-live-card 1.8s ease-in-out infinite;
+    }
+    .pipeline-flow::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      width: 42%;
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,0.55), transparent);
+      animation: d2d-flow 1.15s linear infinite;
+    }
   </style>
 </head>
 <body class="min-h-screen bg-carbon text-slate-100 antialiased">
@@ -794,26 +863,36 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
 
       <article class="min-w-0 overflow-hidden rounded-xl border border-white/10 bg-panel/92 p-5">
         <div class="mb-4 flex items-center justify-between">
-          <h2 class="text-lg font-black" data-i18n="jobQueue">任務佇列</h2>
+          <div>
+            <h2 class="text-lg font-black" data-i18n="jobQueue">任務佇列</h2>
+            <p class="mt-1 text-xs leading-5 text-slate-500" data-i18n="jobQueueHelp">藍色是目前追蹤；Running 會自動排在前面。</p>
+          </div>
           <button id="refreshJobs" class="rounded-lg border border-white/10 px-3 py-2 text-xs font-black text-slate-300 hover:border-sky-300/50">Refresh</button>
         </div>
-        <div id="jobList" class="grid gap-3"></div>
+        <div id="jobList" class="grid max-h-[360px] gap-2 overflow-y-auto pr-1"></div>
       </article>
     </section>
 
     <section class="grid min-w-0 gap-5">
       <article class="min-w-0 overflow-hidden rounded-xl border border-white/10 bg-panel/92 p-5">
-        <div class="mb-5 flex flex-wrap items-center justify-between gap-3">
-          <div>
+        <div class="mb-5 flex flex-wrap items-start justify-between gap-3">
+          <div class="min-w-0">
             <p class="text-xs font-black uppercase tracking-[0.22em] text-sky-300" data-i18n="liveTracker">Live Pipeline Tracker</p>
-            <h2 id="activeJobTitle" class="mt-2 text-2xl font-black" data-i18n="selectJob">選擇任務</h2>
+            <h2 id="activeJobTitle" class="mt-2 max-w-[760px] truncate text-xl font-black md:text-2xl" data-i18n="selectJob">選擇任務</h2>
+            <p id="activeJobMeta" class="mt-2 max-w-[760px] truncate text-xs font-semibold text-slate-500"></p>
           </div>
-          <div class="grid grid-cols-3 gap-2 text-center text-xs font-black">
-            <div class="rounded-lg border border-white/10 bg-white/5 px-3 py-2"><span id="statRunning" class="block text-lg text-sky-300">0</span><span data-i18n="running">Running</span></div>
-            <div class="rounded-lg border border-white/10 bg-white/5 px-3 py-2"><span id="statDone" class="block text-lg text-lime-300">0</span><span data-i18n="done">Done</span></div>
-            <div class="rounded-lg border border-white/10 bg-white/5 px-3 py-2"><span id="statQueue" class="block text-lg text-orange-300">0</span><span data-i18n="queue">Queue</span></div>
+          <div class="flex flex-wrap justify-end gap-2">
+            <div class="grid grid-cols-3 gap-2 text-center text-xs font-black">
+              <div class="rounded-lg border border-white/10 bg-white/5 px-3 py-2"><span id="statRunning" class="block text-lg text-sky-300">0</span><span data-i18n="running">Running</span></div>
+              <div class="rounded-lg border border-white/10 bg-white/5 px-3 py-2"><span id="statDone" class="block text-lg text-lime-300">0</span><span data-i18n="done">Done</span></div>
+              <div class="rounded-lg border border-white/10 bg-white/5 px-3 py-2"><span id="statQueue" class="block text-lg text-orange-300">0</span><span data-i18n="queue">Queue</span></div>
+            </div>
+            <button id="cancelActiveJob" class="hidden rounded-lg border border-red-300/35 bg-red-300/10 px-3 py-2 text-xs font-black text-red-100 hover:bg-red-300/20" type="button">
+              <i data-lucide="circle-stop" class="mr-1 inline h-4 w-4"></i><span data-i18n="cancelJob">取消作業</span>
+            </button>
           </div>
         </div>
+        <div id="pipelineSummary" class="mb-4 hidden rounded-xl border border-sky-300/20 bg-sky-300/[0.05] p-4"></div>
         <div id="pipelineSteps" class="grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-4"></div>
       </article>
 
@@ -1006,12 +1085,13 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       "[sse] EventSource will attach to /api/stream-logs after first render"
     ];
 
-    const phaseIcon = { completed: "check", running: "loader-circle", waiting: "circle", failed: "circle-alert" };
+    const phaseIcon = { completed: "check", running: "loader-circle", waiting: "circle", failed: "circle-alert", cancelled: "circle-stop" };
     const phaseTone = {
       completed: "border-lime-300/35 bg-lime-300/10 text-lime-100",
       running: "border-sky-300/40 bg-sky-300/10 text-sky-100",
       waiting: "border-white/10 bg-white/[0.03] text-slate-300",
-      failed: "border-red-300/45 bg-red-300/10 text-red-100"
+      failed: "border-red-300/45 bg-red-300/10 text-red-100",
+      cancelled: "border-orange-300/45 bg-orange-300/10 text-orange-100"
     };
     const I18N = {
       "zh-Hant": {
@@ -1040,6 +1120,16 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         createImage: "建立圖片輸出",
         createVideo: "建立影片剪輯任務",
         jobQueue: "任務佇列",
+        jobQueueHelp: "藍色是目前追蹤；Running 會自動排在前面。",
+        activeTracking: "目前追蹤",
+        currentStep: "目前階段",
+        nextStep: "下一步",
+        overallProgress: "總進度",
+        waitingForRunner: "等待 runner 接手",
+        noNextStep: "沒有下一步",
+        cancelJob: "取消作業",
+        cancelRequested: "已送出取消請求，runner 會在安全檢查點停止。",
+        cancelFailed: "取消失敗",
         selectJob: "選擇任務",
         galleryTitle: "產出物歷史畫廊",
         mediaOnly: "圖片 / 影片 / 聲音",
@@ -1165,6 +1255,16 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         createImage: "Create Image Output",
         createVideo: "Create Video Job",
         jobQueue: "Job Queue",
+        jobQueueHelp: "Blue is the tracked job. Running jobs are shown first.",
+        activeTracking: "Tracking",
+        currentStep: "Current step",
+        nextStep: "Next step",
+        overallProgress: "Overall progress",
+        waitingForRunner: "Waiting for runner handoff",
+        noNextStep: "No next step",
+        cancelJob: "Cancel Job",
+        cancelRequested: "Cancel requested. The runner will stop at the next safe checkpoint.",
+        cancelFailed: "Cancel failed",
         selectJob: "Select Job",
         galleryTitle: "Output Gallery",
         mediaOnly: "Images / Videos / Audio",
@@ -1290,6 +1390,16 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         createImage: "画像出力を作成",
         createVideo: "動画ジョブを作成",
         jobQueue: "ジョブキュー",
+        jobQueueHelp: "青が現在追跡中のジョブです。Running は先頭に表示します。",
+        activeTracking: "追跡中",
+        currentStep: "現在の段階",
+        nextStep: "次の段階",
+        overallProgress: "全体進捗",
+        waitingForRunner: "runner の引き継ぎ待ち",
+        noNextStep: "次の段階はありません",
+        cancelJob: "ジョブをキャンセル",
+        cancelRequested: "キャンセルをリクエストしました。runner は安全なチェックポイントで停止します。",
+        cancelFailed: "キャンセル失敗",
         selectJob: "ジョブを選択",
         galleryTitle: "出力ギャラリー",
         mediaOnly: "画像 / 動画 / 音声",
@@ -1592,7 +1702,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
     function renderStats() {
       document.getElementById("statRunning").textContent = jobs.filter(job => job.status === "running").length;
       document.getElementById("statDone").textContent = jobs.filter(job => job.status === "completed").length;
-      document.getElementById("statQueue").textContent = jobs.filter(job => job.status === "queued").length;
+      document.getElementById("statQueue").textContent = jobs.filter(job => ["queued", "cancelling"].includes(job.status)).length;
     }
 
     function renderJobs() {
@@ -1605,16 +1715,27 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         `;
         return;
       }
-      list.innerHTML = jobs.map(job => `
-        <button data-job-id="${escapeAttr(job.id)}" class="job-pick w-full rounded-lg border ${job.id === activeJobId ? "border-sky-300/50 bg-sky-300/10" : "border-white/10 bg-white/[0.03] hover:border-white/20"} p-3 text-left">
+      const orderedJobs = [...jobs].sort((a, b) => {
+        const weight = { running: 0, cancelling: 1, queued: 2, failed: 3, cancelled: 4, completed: 5 };
+        return (weight[a.status] ?? 9) - (weight[b.status] ?? 9) || String(b.updatedAt || "").localeCompare(String(a.updatedAt || ""));
+      });
+      list.innerHTML = orderedJobs.map(job => {
+        const currentPhase = activePhase(job);
+        const activeClass = job.id === activeJobId ? "border-sky-300/55 bg-sky-300/10" : job.status === "running" ? "border-sky-300/30 bg-sky-300/[0.05]" : "border-white/10 bg-white/[0.03] hover:border-white/20";
+        return `
+        <button data-job-id="${escapeAttr(job.id)}" class="job-pick w-full rounded-lg border ${activeClass} p-3 text-left">
           <div class="flex items-center justify-between gap-3">
-            <strong class="truncate text-sm">${escapeHtml(job.id)}</strong>
+            <strong class="min-w-0 truncate text-sm">${escapeHtml(displayJobName(job.id))}</strong>
             <span class="rounded-md px-2 py-1 text-[11px] font-black ${statusBadge(job.status)}">${escapeHtml(job.status)}</span>
           </div>
-          <p class="mt-2 truncate text-xs text-slate-400">${escapeHtml(job.videoPath || t("noVideoPath"))}</p>
-          <p class="mt-1 text-xs font-bold text-slate-500">${escapeHtml(job.profile || t("unknownProfile"))}</p>
+          <p class="mt-2 min-w-0 truncate text-xs text-slate-400" title="${escapeAttr(job.videoPath || t("noVideoPath"))}">${escapeHtml(compactPath(job.videoPath || t("noVideoPath")))}</p>
+          <div class="mt-2 flex items-center justify-between gap-2">
+            <p class="min-w-0 truncate text-xs font-bold text-slate-500">${escapeHtml(currentPhase ? `${currentPhase.label} · ${currentPhase.progress}%` : job.profile || t("unknownProfile"))}</p>
+            ${job.status === "running" ? '<span class="h-2 w-2 shrink-0 rounded-full bg-sky-300 shadow-[0_0_14px_rgba(125,211,252,.8)]"></span>' : ""}
+          </div>
         </button>
-      `).join("");
+      `;
+      }).join("");
       document.querySelectorAll(".job-pick").forEach(button => {
         button.addEventListener("click", () => {
           activeJobId = button.dataset.jobId;
@@ -1626,14 +1747,51 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
 
     function renderPipeline() {
       const job = jobs.find(item => item.id === activeJobId) || jobs[0];
-      document.getElementById("activeJobTitle").textContent = job ? `${job.id} · ${job.status}` : t("selectJob");
+      const title = document.getElementById("activeJobTitle");
+      const meta = document.getElementById("activeJobMeta");
+      const summary = document.getElementById("pipelineSummary");
       const target = document.getElementById("pipelineSteps");
+      const cancelButton = document.getElementById("cancelActiveJob");
       if (!job) {
+        title.textContent = t("selectJob");
+        meta.textContent = "";
+        summary.classList.add("hidden");
+        cancelButton.classList.add("hidden");
         target.innerHTML = `<p class="text-sm text-slate-400">${escapeHtml(t("noTaskFlow"))}</p>`;
         return;
       }
+      title.textContent = `${displayJobName(job.id)} · ${job.status}`;
+      title.title = job.id;
+      meta.textContent = `${t("activeTracking")} · ${compactPath(job.videoPath || job.outputDirectory || "")}`;
+      const currentPhase = activePhase(job);
+      const nextPhase = nextWaitingPhase(job);
+      const overall = overallProgress(job);
+      const canCancel = ["running", "queued", "cancelling"].includes(job.status);
+      cancelButton.classList.toggle("hidden", !canCancel);
+      cancelButton.disabled = job.status === "cancelling";
+      summary.classList.remove("hidden");
+      summary.innerHTML = `
+        <div class="grid gap-4 lg:grid-cols-[1fr_1fr_160px] lg:items-center">
+          <div>
+            <p class="text-xs font-black uppercase tracking-wide text-sky-300">${escapeHtml(t("currentStep"))}</p>
+            <p class="mt-1 text-lg font-black text-slate-100">${escapeHtml(currentPhase ? `${currentPhase.label} · ${currentPhase.progress}%` : t("waitingForRunner"))}</p>
+            <p class="mt-1 text-xs font-semibold text-slate-500">${escapeHtml(currentPhase ? currentPhase.detail : job.status)}</p>
+          </div>
+          <div>
+            <p class="text-xs font-black uppercase tracking-wide text-lime-300">${escapeHtml(t("nextStep"))}</p>
+            <p class="mt-1 text-sm font-bold text-slate-300">${escapeHtml(nextPhase ? `${nextPhase.label} · ${nextPhase.detail}` : t("noNextStep"))}</p>
+          </div>
+          <div>
+            <p class="text-xs font-black uppercase tracking-wide text-slate-500">${escapeHtml(t("overallProgress"))}</p>
+            <p class="mt-1 text-3xl font-black text-lime-200">${overall}%</p>
+          </div>
+        </div>
+        <div class="mt-4 h-2 overflow-hidden rounded-full bg-black/40">
+          <div class="relative h-full overflow-hidden rounded-full bg-lime-300 ${job.status === "running" ? "pipeline-flow" : ""}" style="width:${overall}%"></div>
+        </div>
+      `;
       target.innerHTML = job.phases.map((phase, index) => `
-        <div class="relative rounded-xl border ${phaseTone[phase.status] || phaseTone.waiting} p-4">
+        <div class="relative rounded-xl border ${phaseTone[phase.status] || phaseTone.waiting} p-4 ${phase.status === "running" ? "pipeline-card-running" : ""}">
           <div class="mb-4 flex items-center justify-between">
             <span class="grid h-9 w-9 place-items-center rounded-lg bg-black/25">
               <i data-lucide="${phaseIcon[phase.status] || phaseIcon.waiting}" class="h-5 w-5 ${phase.status === "running" ? "animate-spin" : ""}"></i>
@@ -1643,11 +1801,44 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
           <h3 class="font-black">${escapeHtml(phase.label)}</h3>
           <p class="mt-1 text-xs font-semibold text-slate-400">${escapeHtml(phase.detail)}</p>
           <div class="mt-4 h-2 overflow-hidden rounded-full bg-black/40">
-            <div class="h-full rounded-full ${phase.status === "completed" ? "bg-lime-300" : phase.status === "running" ? "bg-sky-300" : phase.status === "failed" ? "bg-red-300" : "bg-slate-700"}" style="width:${phase.progress}%"></div>
+            <div class="relative h-full overflow-hidden rounded-full ${phase.status === "completed" ? "bg-lime-300" : phase.status === "running" ? "bg-sky-300 pipeline-flow" : phase.status === "failed" ? "bg-red-300" : phase.status === "cancelled" ? "bg-orange-300" : "bg-slate-700"}" style="width:${phase.progress}%"></div>
           </div>
           <p class="mt-2 text-xs font-bold text-slate-400">${phase.progress}% · ${escapeHtml(phase.status)}</p>
         </div>
       `).join("");
+      lucide.createIcons();
+    }
+
+    function activePhase(job) {
+      return (job.phases || []).find(phase => phase.status === "running")
+        || (job.phases || []).find(phase => phase.status === "cancelled")
+        || (job.phases || []).find(phase => phase.status === "failed")
+        || (job.phases || []).find(phase => phase.status === "waiting")
+        || null;
+    }
+
+    function nextWaitingPhase(job) {
+      return (job.phases || []).find(phase => phase.status === "waiting") || null;
+    }
+
+    function overallProgress(job) {
+      const phases = job.phases || [];
+      if (!phases.length) return 0;
+      const total = phases.reduce((sum, phase) => sum + Number(phase.progress || 0), 0);
+      return Math.max(0, Math.min(100, Math.round(total / phases.length)));
+    }
+
+    function displayJobName(jobId) {
+      const text = String(jobId || "");
+      return text.length > 42 ? `${text.slice(0, 18)}...${text.slice(-14)}` : text;
+    }
+
+    function compactPath(path) {
+      const text = String(path || "");
+      if (text.length <= 64) return text;
+      const parts = text.split(/[\\/]+/).filter(Boolean);
+      if (parts.length >= 3) return `${parts[0]}\\...\\${parts[parts.length - 2]}\\${parts[parts.length - 1]}`;
+      return `${text.slice(0, 28)}...${text.slice(-24)}`;
     }
 
     function renderGallery() {
@@ -1728,7 +1919,34 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       render();
     }
 
+    async function cancelActiveJob() {
+      const job = jobs.find(item => item.id === activeJobId);
+      if (!job || !["running", "queued", "cancelling"].includes(job.status)) return;
+      const button = document.getElementById("cancelActiveJob");
+      button.disabled = true;
+      try {
+        const response = await fetch("/api/cancel-job", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ job_id: job.id })
+        });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.message || t("cancelFailed"));
+        jobs = [...(payload.jobs || jobs)];
+        gallery = [...(payload.gallery || gallery)].filter(isMediaGalleryItem);
+        appendLogLine(`[dashboard] ${payload.message || t("cancelRequested")}`);
+        document.getElementById("formHint").textContent = t("cancelRequested");
+        render();
+      } catch (error) {
+        appendLogLine(`[cancel] ${error.message}`);
+        document.getElementById("formHint").textContent = `${t("cancelFailed")}: ${error.message}`;
+      } finally {
+        button.disabled = false;
+      }
+    }
+
     document.getElementById("refreshJobs").addEventListener("click", refreshJobs);
+    document.getElementById("cancelActiveJob").addEventListener("click", cancelActiveJob);
     document.getElementById("clearLog").addEventListener("click", () => {
       logLines.length = 0;
       renderLog();
@@ -2363,7 +2581,9 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         phase.status = payload.status || phase.status;
         phase.progress = Number(payload.progress || 0);
       }
-      job.status = job.phases.some(item => item.status === "failed")
+      job.status = job.phases.some(item => item.status === "cancelled")
+        ? "cancelled"
+        : job.phases.some(item => item.status === "failed")
         ? "failed"
         : job.phases.every(item => item.status === "completed") ? "completed" : "running";
       job.updatedAt = payload.created_at || new Date().toISOString();
@@ -2397,6 +2617,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       if (status === "completed") return "bg-lime-300/15 text-lime-200";
       if (status === "running") return "bg-sky-300/15 text-sky-200";
       if (status === "failed") return "bg-red-300/15 text-red-200";
+      if (status === "cancelled" || status === "cancelling") return "bg-orange-300/15 text-orange-200";
       return "bg-orange-300/15 text-orange-200";
     }
 
@@ -3547,6 +3768,8 @@ def phase_status(stages: dict, keys: list[str]) -> str:
     values = [stages.get(key) for key in keys]
     if any(value == "failed" for value in values):
         return "failed"
+    if any(value == "cancelled" for value in values):
+        return "cancelled"
     if values and all(value == "completed" for value in values):
         return "completed"
     if any(value == "running" for value in values):
@@ -3560,6 +3783,8 @@ def phase_progress(stages: dict, keys: list[str]) -> int:
     if not keys:
         return 0
     completed = sum(1 for key in keys if stages.get(key) == "completed")
+    if any(stages.get(key) == "cancelled" for key in keys):
+        return 0
     if completed == len(keys):
         return 100
     if any(stages.get(key) == "running" for key in keys):
@@ -3572,11 +3797,17 @@ def phase_progress(stages: dict, keys: list[str]) -> int:
 def frontend_job_status(manifest: dict) -> str:
     manifest_status = str(manifest.get("status") or "").lower()
     media_type = manifest.get("input", {}).get("media_type")
+    if manifest_status == "cancelling":
+        return "cancelling"
+    if manifest_status == "cancelled":
+        return "cancelled"
     if manifest_status == "queued" and media_type == "video":
         return "queued"
     if manifest_status in {"failed", "error"}:
         return "failed"
     stages = manifest.get("stages", {})
+    if any(status == "cancelled" for status in stages.values()):
+        return "cancelled"
     if stages.get("render") == "completed":
         return "completed"
     if manifest_status == "completed":
@@ -4212,6 +4443,67 @@ def delete_artifact_request(output_root: Path, payload: dict) -> dict:
         "job_id": job_id,
         "path": relative_path,
         "trash_path": str(trash_target),
+        "gallery": gallery_for_frontend(output_root),
+    }
+
+
+def cancel_job_request(output_root: Path, payload: dict) -> dict:
+    job_id = sanitize_job_id(str(payload.get("job_id") or "").strip())
+    if not job_id:
+        raise ValueError("Missing job_id.")
+    job_dir = (output_root / job_id).resolve()
+    if not job_dir.exists() or not job_dir.is_dir():
+        raise ValueError("Job not found.")
+    manifest_path = job_dir / "job_manifest.json"
+    manifest = read_json_or_none(manifest_path) or {"job_id": job_id, "stages": {}}
+    status = str(manifest.get("status") or "").lower()
+    if status in {"completed", "failed", "cancelled"}:
+        return {
+            "status": "ok",
+            "message": f"Job is already {status}.",
+            "job": next((job for job in jobs_for_frontend(output_root) if job["id"] == job_id), None),
+            "jobs": jobs_for_frontend(output_root),
+        }
+
+    reports_dir = job_dir / "reports"
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    write_json_file(
+        reports_dir / "cancel_requested.json",
+        {
+            "schema_version": "1.0",
+            "status": "requested",
+            "job_id": job_id,
+            "created_at": now_utc(),
+        },
+    )
+    stages = manifest.setdefault("stages", {})
+    if status == "queued":
+        manifest["status"] = "cancelled"
+        for stage_name, stage_status in list(stages.items()):
+            if stage_status in {"waiting", "queued", "running"}:
+                stages[stage_name] = "cancelled"
+    else:
+        manifest["status"] = "cancelling"
+        for stage_name, stage_status in list(stages.items()):
+            if stage_status == "running":
+                stages[stage_name] = "cancelled"
+                break
+    manifest["updated_at"] = now_utc()
+    manifest.setdefault("events", []).append(
+        {
+            "type": "cancel_requested",
+            "message": "User requested cancellation from dashboard.",
+            "created_at": now_utc(),
+        }
+    )
+    write_json_file(manifest_path, manifest)
+    publish_pipeline_log(job_id, "[dashboard] cancel requested by user")
+    publish_pipeline_status(job_id, "vision", "cancelled", 0)
+    return {
+        "status": "ok",
+        "message": "Cancel requested. The runner will stop at the next safe checkpoint.",
+        "job_id": job_id,
+        "jobs": jobs_for_frontend(output_root),
         "gallery": gallery_for_frontend(output_root),
     }
 

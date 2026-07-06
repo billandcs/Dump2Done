@@ -13,6 +13,11 @@ from dump2done.core.artifacts import stage_artifact, write_json
 
 LogCallback = Callable[[str], None]
 StageCallback = Callable[[str, str, int], None]
+CancelCallback = Callable[[], bool]
+
+
+class VideoEditCancelled(RuntimeError):
+    """Raised when the local video edit runner receives a user cancel request."""
 
 
 def run_local_video_edit(
@@ -22,10 +27,17 @@ def run_local_video_edit(
     resolution: str,
     log: LogCallback | None = None,
     stage: StageCallback | None = None,
+    should_cancel: CancelCallback | None = None,
 ) -> dict[str, Any]:
     """Run the local deterministic video edit MVP and write an MP4 render artifact."""
     log = log or (lambda message: None)
     stage = stage or (lambda name, status, progress: None)
+    should_cancel = should_cancel or (lambda: False)
+
+    def check_cancel() -> None:
+        if should_cancel():
+            raise VideoEditCancelled("User cancelled this video edit job.")
+
     input_path = input_path.resolve()
     job_dir = job_dir.resolve()
     cache_dir = job_dir / "cache" / "video_edit"
@@ -40,13 +52,16 @@ def run_local_video_edit(
     _reset_dir(raw_frames_dir)
     _reset_dir(edited_frames_dir)
 
+    check_cancel()
     stage("analyze", "running", 10)
     log(f"[video-edit] probing source: {input_path.name}")
     probe = ffprobe_json(input_path)
+    check_cancel()
     video_info = summarize_probe(probe)
     write_json(reports_dir / "video_info.json", stage_artifact("analyze", "completed", **video_info))
     stage("analyze", "completed", 100)
 
+    check_cancel()
     stage("edit_plan", "running", 20)
     operations = plan_operations(prompt)
     plan = stage_artifact(
@@ -68,6 +83,7 @@ def run_local_video_edit(
         vf_parts.append(scale_filter)
     vf = ",".join(vf_parts)
 
+    check_cancel()
     stage("video_edit", "running", 5)
     log(f"[video-edit] extracting frames at {fps_text} fps")
     extract_command = [
@@ -80,6 +96,7 @@ def run_local_video_edit(
         extract_command.extend(["-vf", vf])
     extract_command.extend([str(raw_frames_dir / "frame_%06d.png")])
     run_command(extract_command)
+    check_cancel()
 
     frames = sorted(raw_frames_dir.glob("frame_*.png"))
     if not frames:
@@ -87,6 +104,7 @@ def run_local_video_edit(
 
     total = len(frames)
     for index, frame_path in enumerate(frames, start=1):
+        check_cancel()
         output_frame = edited_frames_dir / frame_path.name
         with Image.open(frame_path) as source:
             edited = apply_frame_operations(source.convert("RGB"), operations)
@@ -95,8 +113,10 @@ def run_local_video_edit(
             progress = max(5, min(98, round(index / total * 100)))
             stage("video_edit", "running", progress)
             log(f"[video-edit] processed frame {index}/{total}")
+    check_cancel()
     stage("video_edit", "completed", 100)
 
+    check_cancel()
     stage("render", "running", 30)
     output_path = unique_render_path(renders_dir / f"edited_{input_path.stem}.mp4")
     log(f"[video-edit] encoding render: {output_path.name}")
@@ -131,6 +151,7 @@ def run_local_video_edit(
         str(output_path),
     ]
     run_command(render_command)
+    check_cancel()
     stage("render", "completed", 100)
 
     relative_output = str(output_path.relative_to(job_dir)).replace("\\", "/")
