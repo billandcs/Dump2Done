@@ -11,6 +11,7 @@ import mimetypes
 import os
 import queue
 import re
+import shutil
 import subprocess
 import threading
 import uuid
@@ -518,27 +519,57 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
           </label>
           <label class="grid gap-2">
             <span class="text-sm font-bold text-slate-300">編輯描述</span>
-            <textarea name="prompt" rows="7" class="resize-none rounded-lg border border-white/10 bg-black/30 px-3 py-3 text-sm leading-6 text-slate-100 outline-none focus:border-sky-300/70" placeholder="描述您的編輯，例如：變亮一點、轉成黑白、銳化、旋轉 90 度、水平翻轉。影片會先建立剪輯任務並保存 prompt。"></textarea>
+            <textarea id="mediaPrompt" name="prompt" rows="7" class="resize-none rounded-lg border border-white/10 bg-black/30 px-3 py-3 text-sm leading-6 text-slate-100 outline-none focus:border-sky-300/70" placeholder="描述想做的圖片編輯，例如：往左旋轉90度、變亮一點、轉成黑白、銳化。"></textarea>
           </label>
-          <label class="grid gap-2">
-            <span class="text-sm font-bold text-slate-300">Profile</span>
-            <select name="profile" class="h-11 rounded-lg border border-white/10 bg-black/40 px-3 text-sm text-slate-100 outline-none focus:border-sky-300/70">
-              <option value="configs/default.yaml">default.yaml</option>
-              <option value="configs/qualcomm_windows_arm64.yaml" selected>qualcomm_windows_arm64.yaml</option>
-              <option value="configs/amd_windows_directml.yaml">amd_windows_directml.yaml</option>
-              <option value="configs/intel_windows_openvino.yaml">intel_windows_openvino.yaml</option>
-            </select>
-          </label>
-          <div class="grid grid-cols-2 gap-3">
-            <select name="modelVersion" class="h-11 rounded-lg border border-white/10 bg-black/40 px-3 text-sm text-slate-100 outline-none focus:border-sky-300/70">
-              <option value="local-v1">Local V1</option>
-              <option value="v2-placeholder">V2.0</option>
-            </select>
-            <select name="resolution" class="h-11 rounded-lg border border-white/10 bg-black/40 px-3 text-sm text-slate-100 outline-none focus:border-sky-300/70">
-              <option value="original">Original</option>
-              <option value="720p">720P</option>
-              <option value="1080p">1080P</option>
-            </select>
+          <div id="imageOptions" class="hidden grid gap-3 rounded-xl border border-lime-300/20 bg-lime-300/[0.04] p-3">
+            <div class="flex items-start gap-3">
+              <i data-lucide="image-plus" class="mt-0.5 h-5 w-5 text-lime-200"></i>
+              <div>
+                <p class="text-sm font-black text-lime-100">圖片模式</p>
+                <p class="mt-1 text-xs leading-5 text-slate-400">不需要 Profile 或解析度選單。上傳圖片、輸入指令，完成後會匯出 PNG 並在下方顯示完整路徑。</p>
+              </div>
+            </div>
+            <label class="grid gap-2">
+              <span class="text-sm font-bold text-slate-300">輸出資料夾</span>
+              <input name="imageOutputDirectory" value="output\exports\images" class="h-11 rounded-lg border border-white/10 bg-black/40 px-3 text-sm text-slate-100 outline-none focus:border-lime-300/70">
+            </label>
+            <div class="flex flex-wrap gap-2">
+              <button class="prompt-chip rounded-lg border border-lime-300/25 bg-lime-300/10 px-3 py-2 text-xs font-black text-lime-100 hover:bg-lime-300/20" type="button" data-prompt="往左旋轉90度">左轉90度</button>
+              <button class="prompt-chip rounded-lg border border-lime-300/25 bg-lime-300/10 px-3 py-2 text-xs font-black text-lime-100 hover:bg-lime-300/20" type="button" data-prompt="往右旋轉90度">右轉90度</button>
+              <button class="prompt-chip rounded-lg border border-lime-300/25 bg-lime-300/10 px-3 py-2 text-xs font-black text-lime-100 hover:bg-lime-300/20" type="button" data-prompt="變亮一點並銳化">變亮 + 銳化</button>
+              <button class="prompt-chip rounded-lg border border-lime-300/25 bg-lime-300/10 px-3 py-2 text-xs font-black text-lime-100 hover:bg-lime-300/20" type="button" data-prompt="轉成黑白">黑白</button>
+            </div>
+          </div>
+          <div id="videoOptions" class="grid gap-3">
+            <label class="grid gap-2">
+              <span class="text-sm font-bold text-slate-300">Profile</span>
+              <select name="profile" class="h-11 rounded-lg border border-white/10 bg-black/40 px-3 text-sm text-slate-100 outline-none focus:border-sky-300/70">
+                <option value="configs/default.yaml">default.yaml</option>
+                <option value="configs/qualcomm_windows_arm64.yaml" selected>qualcomm_windows_arm64.yaml</option>
+                <option value="configs/amd_windows_directml.yaml">amd_windows_directml.yaml</option>
+                <option value="configs/intel_windows_openvino.yaml">intel_windows_openvino.yaml</option>
+              </select>
+            </label>
+            <div class="grid grid-cols-2 gap-3">
+              <select name="modelVersion" class="h-11 rounded-lg border border-white/10 bg-black/40 px-3 text-sm text-slate-100 outline-none focus:border-sky-300/70">
+                <option value="local-v1">Local V1</option>
+                <option value="v2-placeholder">V2.0</option>
+              </select>
+              <select name="resolution" class="h-11 rounded-lg border border-white/10 bg-black/40 px-3 text-sm text-slate-100 outline-none focus:border-sky-300/70">
+                <option value="original">Original</option>
+                <option value="720p">720P</option>
+                <option value="1080p">1080P</option>
+              </select>
+            </div>
+          </div>
+          <div id="mediaResult" class="hidden rounded-xl border border-sky-300/20 bg-sky-300/[0.05] p-3 text-xs text-slate-300">
+            <div class="flex items-start justify-between gap-3">
+              <div class="min-w-0">
+                <p class="font-black text-sky-100">輸出完成</p>
+                <p id="mediaResultPath" class="mt-1 break-all font-mono text-slate-300"></p>
+              </div>
+              <button id="openMediaResultFolder" class="shrink-0 rounded-lg border border-sky-300/30 px-3 py-2 font-black text-sky-100 hover:bg-sky-300/10" type="button">開啟資料夾</button>
+            </div>
           </div>
           <button id="mediaSubmit" class="mt-2 inline-flex h-12 items-center justify-center gap-2 rounded-lg bg-lime-300 px-4 text-sm font-black text-slate-950 hover:bg-lime-200 disabled:cursor-not-allowed disabled:bg-slate-600 disabled:text-slate-300" type="submit">
             <i data-lucide="sparkles" class="h-5 w-5"></i>建立 / 編輯
@@ -794,6 +825,23 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
     });
     const mediaFileInput = document.getElementById("mediaFile");
     const dropZone = document.getElementById("dropZone");
+    const mediaPrompt = document.getElementById("mediaPrompt");
+    const imageOptions = document.getElementById("imageOptions");
+    const videoOptions = document.getElementById("videoOptions");
+    const mediaResult = document.getElementById("mediaResult");
+    const mediaResultPath = document.getElementById("mediaResultPath");
+    const openMediaResultFolder = document.getElementById("openMediaResultFolder");
+    let currentMediaType = "unknown";
+    let lastMediaOutputFolder = "";
+    document.querySelectorAll(".prompt-chip").forEach(button => {
+      button.addEventListener("click", () => {
+        mediaPrompt.value = button.dataset.prompt || "";
+        mediaPrompt.focus();
+      });
+    });
+    openMediaResultFolder.addEventListener("click", () => {
+      if (lastMediaOutputFolder) openFolder(lastMediaOutputFolder, "media output");
+    });
     dropZone.addEventListener("dragover", event => {
       event.preventDefault();
       dropZone.classList.add("border-sky-300/70", "bg-sky-300/10");
@@ -821,15 +869,18 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       const imagePreview = document.getElementById("uploadImagePreview");
       const videoPreview = document.getElementById("uploadVideoPreview");
       clearUploadPreview();
+      hideMediaResult();
       if (!file) {
         pill.textContent = "Auto Detect";
         name.textContent = "上傳想要編輯的圖片或影片";
         hint.textContent = "系統會自動判斷 image / video";
         emptyState.classList.remove("hidden");
         previewState.classList.add("hidden");
+        updateEditorMode("unknown");
         return;
       }
       const detected = detectClientMediaType(file);
+      updateEditorMode(detected);
       pill.textContent = detected === "image" ? "Image Edit" : detected === "video" ? "Video Pipeline" : "Unknown";
       name.textContent = file.name;
       hint.textContent = `${file.type || "unknown"} · ${formatBytes(file.size)}`;
@@ -873,7 +924,8 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
             prompt: data.prompt || "",
             profile: data.profile,
             model_version: data.modelVersion,
-            resolution: data.resolution
+            resolution: currentMediaType === "image" ? "original" : data.resolution,
+            output_directory: data.imageOutputDirectory || ""
           })
         });
         const payload = await response.json();
@@ -885,6 +937,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         appendLogLine(`[media] ${payload.message}`);
         if (payload.command) appendLogLine(`[next] ${payload.command}`);
         hint.textContent = payload.message;
+        showMediaResult(payload);
         render();
         connectSseStream();
       } catch (error) {
@@ -894,6 +947,47 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         submit.disabled = false;
       }
     });
+
+    function updateEditorMode(mediaType) {
+      currentMediaType = mediaType;
+      const submit = document.getElementById("mediaSubmit");
+      const hint = document.getElementById("formHint");
+      if (mediaType === "image") {
+        imageOptions.classList.remove("hidden");
+        videoOptions.classList.add("hidden");
+        submit.innerHTML = `<i data-lucide="sparkles" class="h-5 w-5"></i>建立圖片輸出`;
+        mediaPrompt.placeholder = "描述想做的圖片編輯，例如：往左旋轉90度、變亮一點、轉成黑白、銳化。";
+        hint.textContent = "圖片會立即以本地 Pillow 編輯並匯出到指定資料夾。";
+      } else if (mediaType === "video") {
+        imageOptions.classList.add("hidden");
+        videoOptions.classList.remove("hidden");
+        submit.innerHTML = `<i data-lucide="sparkles" class="h-5 w-5"></i>建立影片剪輯任務`;
+        mediaPrompt.placeholder = "描述影片剪輯需求，例如：找出最精彩的30秒、加字幕、裁成直式短影音。";
+        hint.textContent = "影片會建立 pipeline job，輸出會進入工作佇列。";
+      } else {
+        imageOptions.classList.add("hidden");
+        videoOptions.classList.remove("hidden");
+        submit.innerHTML = `<i data-lucide="sparkles" class="h-5 w-5"></i>建立 / 編輯`;
+        mediaPrompt.placeholder = "描述想做的編輯。選擇檔案後會自動切換圖片或影片模式。";
+        hint.textContent = "";
+      }
+      lucide.createIcons();
+    }
+
+    function hideMediaResult() {
+      mediaResult.classList.add("hidden");
+      mediaResultPath.textContent = "";
+      lastMediaOutputFolder = "";
+    }
+
+    function showMediaResult(payload) {
+      const outputPath = payload.output_path || "";
+      const outputFolder = payload.output_folder || "";
+      if (!outputPath && !outputFolder) return;
+      lastMediaOutputFolder = outputFolder || outputPath;
+      mediaResultPath.textContent = outputPath || outputFolder;
+      mediaResult.classList.remove("hidden");
+    }
 
     function detectClientMediaType(file) {
       if ((file.type || "").startsWith("image/")) return "image";
@@ -2244,6 +2338,7 @@ def create_media_job(output_root: Path, payload: dict) -> dict:
         raise ValueError("Unsupported profile.")
     model_version = str(payload.get("model_version") or "local-v1")
     resolution = str(payload.get("resolution") or "original")
+    requested_output_directory = str(payload.get("output_directory") or "").strip()
     data_base64 = str(payload.get("data_base64") or "")
     if not data_base64:
         raise ValueError("Missing uploaded file data.")
@@ -2304,6 +2399,7 @@ def create_media_job(output_root: Path, payload: dict) -> dict:
             "prompt": prompt,
             "model_version": model_version,
             "resolution": resolution,
+            "requested_output_directory": requested_output_directory,
             "input": manifest["input"],
         },
     )
@@ -2314,6 +2410,7 @@ def create_media_job(output_root: Path, payload: dict) -> dict:
             "model_version": model_version,
             "resolution": resolution,
             "media_type": media_type,
+            "requested_output_directory": requested_output_directory,
         },
     )
 
@@ -2322,15 +2419,22 @@ def create_media_job(output_root: Path, payload: dict) -> dict:
     message = ""
     if media_type == "image":
         edit_result = edit_image_locally(input_path, renders_dir, prompt, resolution)
+        output_path = job_dir / edit_result["relative_output"]
+        export_dir = resolve_media_export_directory(output_root, requested_output_directory)
+        export_path = export_image_result(output_path, export_dir, job_id)
+        edit_result["exported_output"] = str(export_path)
+        edit_result["export_directory"] = str(export_dir)
         manifest["stages"] = {"upload": "completed", "image_edit": edit_result["status"]}
-        manifest["outputs"] = {"edited_image": edit_result["relative_output"]}
+        manifest["outputs"] = {
+            "edited_image": edit_result["relative_output"],
+            "exported_image": str(export_path),
+        }
         write_json_file(job_dir / "job_manifest.json", manifest)
         write_json_file(reports_dir / "image_edit.json", edit_result)
-        output_path = job_dir / edit_result["relative_output"]
         gallery_items.append(
             artifact_card_for_frontend(output_root, job_dir, job_id, output_path, {}, {}, 0)
         )
-        message = edit_result["message"]
+        message = f'{edit_result["message"]} 已匯出到 {export_path}'
         publish_pipeline_log(job_id, f"[image] {message}")
         publish_pipeline_status(job_id, "render", "completed", 100)
     else:
@@ -2351,12 +2455,40 @@ def create_media_job(output_root: Path, payload: dict) -> dict:
             "status": manifest["status"],
             "profile": Path(profile).name,
             "videoPath": str(input_path),
-            "outputDirectory": str(output_root),
+            "outputDirectory": str(export_dir) if media_type == "image" else str(output_root),
             "updatedAt": created_at,
             "phases": frontend_phases(manifest),
         },
         "gallery": gallery_items,
+        "output_path": str(export_path) if media_type == "image" else "",
+        "output_folder": str(export_dir) if media_type == "image" else "",
     }
+
+
+def resolve_media_export_directory(output_root: Path, requested_directory: str) -> Path:
+    output_base = output_root.parent.resolve()
+    if requested_directory:
+        raw_target = Path(requested_directory)
+        target = raw_target.resolve() if raw_target.is_absolute() else (Path.cwd() / raw_target).resolve()
+    else:
+        target = (output_base / "exports" / "images").resolve()
+    try:
+        target.relative_to(output_base)
+    except ValueError as exc:
+        raise ValueError(f"圖片輸出資料夾需位於本專案 output 目錄底下：{output_base}") from exc
+    target.mkdir(parents=True, exist_ok=True)
+    return target
+
+
+def export_image_result(source_path: Path, export_dir: Path, job_id: str) -> Path:
+    suffix = source_path.suffix or ".png"
+    target = export_dir / f"{job_id}_edited{suffix}"
+    counter = 2
+    while target.exists():
+        target = export_dir / f"{job_id}_edited_{counter}{suffix}"
+        counter += 1
+    shutil.copy2(source_path, target)
+    return target
 
 
 def detect_media_type(filename: str, content_type: str, content: bytes) -> str:
@@ -2413,9 +2545,24 @@ def edit_image_locally(input_path: Path, renders_dir: Path, prompt: str, resolut
         if any(token in prompt_lower for token in ["模糊", "blur"]):
             image = image.filter(ImageFilter.GaussianBlur(radius=2))
             operations.append("blur")
-        if "90" in prompt_lower or "九十" in prompt_lower:
+        wants_rotation = any(token in prompt_lower for token in ["90", "九十", "旋轉", "rotate", "轉"])
+        wants_left_rotation = any(
+            token in prompt_lower
+            for token in ["往左", "向左", "左旋", "左轉", "逆時針", "counterclockwise", "anti-clockwise", "ccw"]
+        )
+        wants_right_rotation = any(
+            token in prompt_lower
+            for token in ["往右", "向右", "右旋", "右轉", "順時針", "clockwise", "cw"]
+        )
+        if wants_rotation and wants_left_rotation:
+            image = image.rotate(90, expand=True)
+            operations.append("rotate_left_90")
+        elif wants_rotation and wants_right_rotation:
             image = image.rotate(-90, expand=True)
-            operations.append("rotate_90")
+            operations.append("rotate_right_90")
+        elif "90" in prompt_lower or "九十" in prompt_lower:
+            image = image.rotate(-90, expand=True)
+            operations.append("rotate_right_90")
         if any(token in prompt_lower for token in ["水平翻轉", "mirror", "flip horizontal"]):
             image = ImageOps.mirror(image)
             operations.append("flip_horizontal")
