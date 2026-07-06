@@ -8,6 +8,9 @@ import json
 import mimetypes
 import os
 import queue
+import re
+import subprocess
+import threading
 import uuid
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -27,6 +30,9 @@ STAGE_LABELS = [
 ]
 
 PIPELINE_EVENT_QUEUE: queue.Queue[dict] = queue.Queue()
+LOG_WRITE_LOCK = threading.Lock()
+DEFAULT_OUTPUT_ROOT = Path("output/jobs")
+CONSOLE_LOG_PATH = Path("output/logs/dashboard_console.ndjson")
 
 TOOLTIPS = {
     "Qualcomm Q1": "這代表目前這台機器是 Qualcomm 平台，適合先用 CPU int8 跑本地 MVP，未來再評估 QNN/DirectML 加速。Q1 不是效能分數滿分，而是「可開發、待加速優化」。",
@@ -116,6 +122,21 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self._send_json(response)
             except ValueError as exc:
                 self._send_json({"status": "error", "message": str(exc)}, status=400)
+            except Exception as exc:
+                self._send_json({"status": "error", "message": str(exc)}, status=500)
+            return
+        if parsed.path == "/api/console-log":
+            try:
+                payload = self._read_json_body()
+                event = {
+                    "type": "browser_log",
+                    "job_id": str(payload.get("job_id") or ""),
+                    "message": str(payload.get("message") or ""),
+                    "source": "browser",
+                    "created_at": now_utc(),
+                }
+                persist_console_event(event)
+                self._send_json({"status": "ok", "path": str(CONSOLE_LOG_PATH)})
             except Exception as exc:
                 self._send_json({"status": "error", "message": str(exc)}, status=500)
             return
@@ -333,16 +354,18 @@ def drain_pipeline_event_queue(limit: int = 100) -> list[dict]:
 
 
 def log_event(job_id: str, message: str) -> dict:
-    return {
+    event = {
         "type": "log",
         "job_id": job_id,
         "message": message,
         "created_at": now_utc(),
     }
+    persist_console_event(event)
+    return event
 
 
 def status_event(job_id: str, step: str, status: str, progress: int) -> dict:
-    return {
+    event = {
         "type": "status",
         "job_id": job_id,
         "step": step,
@@ -350,6 +373,8 @@ def status_event(job_id: str, step: str, status: str, progress: int) -> dict:
         "progress": max(0, min(100, int(progress))),
         "created_at": now_utc(),
     }
+    persist_console_event(event)
+    return event
 
 
 def sse_payload(payload: dict, event: str = "message") -> bytes:
@@ -362,6 +387,32 @@ def latest_job_id(output_root: Path) -> str:
     if not jobs:
         return ""
     return str(jobs[0]["manifest"].get("job_id", jobs[0]["dir"].name))
+
+
+def persist_console_event(event: dict) -> None:
+    event_type = event.get("type")
+    if event_type == "heartbeat":
+        return
+    payload = {
+        **event,
+        "message_plain": strip_ansi(str(event.get("message", ""))),
+    }
+    with LOG_WRITE_LOCK:
+        append_ndjson(CONSOLE_LOG_PATH, payload)
+        job_id = str(event.get("job_id") or "")
+        if job_id:
+            safe_job = sanitize_job_id(job_id)
+            append_ndjson(DEFAULT_OUTPUT_ROOT / safe_job / "logs" / "console.ndjson", payload)
+
+
+def append_ndjson(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
+
+
+def strip_ansi(value: str) -> str:
+    return re.sub(r"\x1b\[[0-9;]*m", "", value)
 
 
 def render_job_control_dashboard(output_root: Path, selected_job_id: str | None) -> str:
@@ -643,7 +694,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
           </dl>
           <div class="mt-4 grid grid-cols-2 gap-2">
             ${primaryArtifactAction(item)}
-            <button class="rounded-lg border border-lime-300/30 px-3 py-2 text-xs font-black text-lime-100 hover:bg-lime-300/10" onclick="openFolder('${escapeAttr(item.folderPath || "")}')"><i data-lucide="folder-open" class="mr-1 inline h-3 w-3"></i>開啟資料夾</button>
+            <button class="rounded-lg border border-lime-300/30 px-3 py-2 text-xs font-black text-lime-100 hover:bg-lime-300/10" onclick="openFolderById('${escapeAttr(item.id)}')"><i data-lucide="folder-open" class="mr-1 inline h-3 w-3"></i>開啟資料夾</button>
           </div>
         </article>
       `).join("");
@@ -658,13 +709,14 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       scrollTerminal();
     }
 
-    function appendLogLine(line) {
+    function appendLogLine(line, persist = true) {
       const terminal = document.getElementById("consoleLog");
       logLines.push(stripAnsi(String(line)));
       if (logLines.length > 240) logLines.splice(0, logLines.length - 240);
       terminal.appendChild(logLineElement(line));
       while (terminal.children.length > 180) terminal.removeChild(terminal.firstChild);
       scrollTerminal();
+      if (persist) persistConsoleLog(line);
     }
 
     function logLineElement(line) {
@@ -721,13 +773,22 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       }
     });
 
-    async function openFolder(folderPath) {
+    async function openFolderById(artifactId) {
+      const item = gallery.find(entry => entry.id === artifactId);
+      if (!item) {
+        appendLogLine(`[folder] Artifact not found: ${artifactId}`);
+        return;
+      }
+      await openFolder(item.folderPath, item.relativePath);
+    }
+
+    async function openFolder(folderPath, label = "") {
       appendLogLine(`[folder] ${folderPath || "No folder path supplied"}`);
       try {
         const response = await fetch("/api/open-folder", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ path: folderPath })
+          body: JSON.stringify({ path: folderPath, label })
         });
         const payload = await response.json();
         appendLogLine(`[folder] ${payload.message || payload.status}`);
@@ -738,12 +799,21 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
 
     function primaryArtifactAction(item) {
       if (item.kind === "video" || item.kind === "audio") {
-        return `<button class="rounded-lg border border-sky-300/30 px-3 py-2 text-xs font-black text-sky-100 hover:bg-sky-300/10" onclick="playLocal('${escapeAttr(item.mediaUrl || "")}', '${escapeAttr(item.fileName)}', '${escapeAttr(item.kind)}')"><i data-lucide="${item.kind === "audio" ? "volume-2" : "play"}" class="mr-1 inline h-3 w-3"></i>${item.kind === "audio" ? "播放音訊" : "本地播放"}</button>`;
+        return `<button class="rounded-lg border border-sky-300/30 px-3 py-2 text-xs font-black text-sky-100 hover:bg-sky-300/10" onclick="playArtifactById('${escapeAttr(item.id)}')"><i data-lucide="${item.kind === "audio" ? "volume-2" : "play"}" class="mr-1 inline h-3 w-3"></i>${item.kind === "audio" ? "播放音訊" : "本地播放"}</button>`;
       }
       if (item.artifactUrl) {
         return `<a class="rounded-lg border border-sky-300/30 px-3 py-2 text-center text-xs font-black text-sky-100 hover:bg-sky-300/10" href="${escapeAttr(item.artifactUrl)}"><i data-lucide="file-json" class="mr-1 inline h-3 w-3"></i>檢視 JSON</a>`;
       }
       return `<button disabled class="cursor-not-allowed rounded-lg border border-white/10 px-3 py-2 text-xs font-black text-slate-500"><i data-lucide="ban" class="mr-1 inline h-3 w-3"></i>不可預覽</button>`;
+    }
+
+    function playArtifactById(artifactId) {
+      const item = gallery.find(entry => entry.id === artifactId);
+      if (!item) {
+        appendLogLine(`[player] Artifact not found: ${artifactId}`);
+        return;
+      }
+      playLocal(item.mediaUrl, item.fileName, item.kind);
     }
 
     function playLocal(mediaUrl, fileName, kind) {
@@ -815,7 +885,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       try {
         payload = JSON.parse(event.data);
       } catch {
-        appendLogLine(event.data);
+        appendLogLine(event.data, false);
         return;
       }
       if (payload.type === "status") {
@@ -826,10 +896,22 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         return;
       }
       if (payload.type === "heartbeat") {
-        appendLogLine(`${payload.message} · ${payload.created_at}`);
+        appendLogLine(`${payload.message} · ${payload.created_at}`, false);
         return;
       }
-      appendLogLine(payload.message || JSON.stringify(payload));
+      appendLogLine(payload.message || JSON.stringify(payload), false);
+    }
+
+    function persistConsoleLog(line) {
+      fetch("/api/console-log", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          job_id: activeJobId || "",
+          message: stripAnsi(String(line))
+        }),
+        keepalive: true
+      }).catch(() => {});
     }
 
     function updateJobPhase(payload) {
@@ -1818,6 +1900,7 @@ def open_folder_request(output_root: Path, payload: dict) -> dict:
     folder = str(payload.get("path") or "").strip()
     if not folder:
         raise ValueError("Folder path is required.")
+    label = str(payload.get("label") or "").strip()
     base = Path.cwd().resolve()
     target = (base / folder).resolve() if not Path(folder).is_absolute() else Path(folder).resolve()
     allowed_root = output_root.parent.resolve()
@@ -1825,12 +1908,31 @@ def open_folder_request(output_root: Path, payload: dict) -> dict:
         raise ValueError("Only folders under the local output directory can be opened.")
     if not target.exists():
         return {"status": "missing", "message": f"Folder does not exist yet: {target}"}
-    if not target.is_dir():
-        target = target.parent
-    if hasattr(os, "startfile"):
-        os.startfile(str(target))  # type: ignore[attr-defined]
-        return {"status": "ok", "message": f"Opened {target}"}
-    return {"status": "ok", "message": f"Folder path: {target}"}
+    opened_target = target if target.is_dir() else target.parent
+    if os.name == "nt":
+        command = ["explorer.exe", str(opened_target)]
+        subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        message = f"Opened Explorer: {opened_target}"
+    elif hasattr(os, "startfile"):
+        os.startfile(str(opened_target))  # type: ignore[attr-defined]
+        message = f"Opened {opened_target}"
+    else:
+        message = f"Folder path: {opened_target}"
+    persist_console_event(
+        {
+            "type": "open_folder",
+            "job_id": "",
+            "message": f"{message}" + (f" ({label})" if label else ""),
+            "path": str(opened_target),
+            "created_at": now_utc(),
+        }
+    )
+    return {
+        "status": "ok",
+        "message": message,
+        "path": str(opened_target),
+        "label": label,
+    }
 
 
 def sanitize_job_id(value: str) -> str:
