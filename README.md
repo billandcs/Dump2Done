@@ -15,6 +15,7 @@ Dump2Done is a local-first AI video post-production platform blueprint. Phase 1 
 - `main.py`: CLI entrypoint.
 - `src/dump2done/`: package layout for config, job artifacts, media analysis, and pipeline stages.
 - `pyproject.toml`: package metadata and optional MVP dependencies.
+- `dashboard.py`: local verification dashboard for generated job artifacts.
 
 ## Run Environment Probe
 
@@ -23,3 +24,11 @@ python check_env.py --output output/env_report.json
 ```
 
 If `python` is not available in PATH, install Python 3.10/3.11 or fix the launcher/PATH before Phase 2 implementation.
+
+## Run Local Verification Dashboard
+
+```bash
+python dashboard.py --port 8765
+```
+
+Then open `http://127.0.0.1:8765/`.
