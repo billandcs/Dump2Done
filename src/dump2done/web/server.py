@@ -65,7 +65,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._send_sse(stream_pipeline_events(self.output_root, query.get("job", [""])[0]))
             return
         if parsed.path == "/api/jobs":
-            self._send_json({"jobs": jobs_for_frontend(self.output_root)})
+            self._send_json(
+                {
+                    "jobs": jobs_for_frontend(self.output_root),
+                    "gallery": gallery_for_frontend(self.output_root),
+                }
+            )
             return
         if parsed.path == "/artifact":
             query = parse_qs(parsed.query)
@@ -478,7 +483,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
             <p class="text-xs font-black uppercase tracking-[0.22em] text-lime-300">Artifacts</p>
             <h2 class="mt-2 text-xl font-black">產出物歷史畫廊</h2>
           </div>
-          <span class="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs font-bold text-slate-300">MP4 / JSON artifacts</span>
+          <span class="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs font-bold text-slate-300">MP4 / WAV / JSON artifacts</span>
         </div>
         <div id="gallery" class="grid gap-4 md:grid-cols-2 xl:grid-cols-3"></div>
       </article>
@@ -495,62 +500,29 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
     </section>
   </main>
 
+  <div id="mediaModal" class="fixed inset-0 z-50 hidden bg-black/80 p-5 backdrop-blur-sm">
+    <div class="mx-auto flex h-full max-w-5xl flex-col justify-center">
+      <div class="rounded-xl border border-white/10 bg-[#080b10] shadow-2xl">
+        <div class="flex items-center justify-between border-b border-white/10 px-4 py-3">
+          <h2 id="mediaTitle" class="truncate pr-4 text-sm font-black text-slate-100">Media Preview</h2>
+          <button onclick="closeMediaModal()" class="rounded-lg border border-white/10 px-3 py-2 text-xs font-black text-slate-300 hover:border-red-300/50 hover:text-red-200">
+            <i data-lucide="x" class="mr-1 inline h-3 w-3"></i>關閉
+          </button>
+        </div>
+        <div class="p-4">
+          <video id="mediaVideo" class="hidden max-h-[72vh] w-full rounded-lg bg-black" controls playsinline></video>
+          <audio id="mediaAudio" class="hidden w-full" controls></audio>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script>
     const INITIAL_JOBS = __INITIAL_JOBS__;
     const INITIAL_GALLERY = __INITIAL_GALLERY__;
     const SELECTED_JOB_ID = "__SELECTED_JOB_ID__";
-    const MOCK_JOBS = [
-      {
-        id: "creator_launch_reel",
-        status: "running",
-        profile: "qualcomm_windows_arm64.yaml",
-        videoPath: "C:\\Users\\subil\\Videos\\launch-keynote.mp4",
-        outputDirectory: "output\\jobs",
-        updatedAt: "2026-07-06T07:41:00Z",
-        phases: [
-          { key: "asr", label: "語音識別", detail: "ASR - Faster-Whisper", status: "completed", progress: 100 },
-          { key: "llm", label: "語意理解", detail: "LLM - Ollama", status: "running", progress: 63 },
-          { key: "vision", label: "智慧裁剪", detail: "Vision", status: "waiting", progress: 0 },
-          { key: "render", label: "影音渲染", detail: "FFmpeg", status: "waiting", progress: 0 }
-        ]
-      },
-      {
-        id: "podcast_highlights_042",
-        status: "completed",
-        profile: "default.yaml",
-        videoPath: "D:\\Footage\\founder-podcast.mp4",
-        outputDirectory: "output\\jobs",
-        updatedAt: "2026-07-06T06:12:00Z",
-        phases: [
-          { key: "asr", label: "語音識別", detail: "ASR - Faster-Whisper", status: "completed", progress: 100 },
-          { key: "llm", label: "語意理解", detail: "LLM - Ollama", status: "completed", progress: 100 },
-          { key: "vision", label: "智慧裁剪", detail: "Vision", status: "completed", progress: 100 },
-          { key: "render", label: "影音渲染", detail: "FFmpeg", status: "completed", progress: 100 }
-        ]
-      },
-      {
-        id: "qualcomm_smoke_preview",
-        status: "queued",
-        profile: "qualcomm_windows_arm64.yaml",
-        videoPath: "output\\smoke_input.mp4",
-        outputDirectory: "output\\jobs",
-        updatedAt: "2026-07-06T05:55:00Z",
-        phases: [
-          { key: "asr", label: "語音識別", detail: "ASR - Faster-Whisper", status: "waiting", progress: 0 },
-          { key: "llm", label: "語意理解", detail: "LLM - Ollama", status: "waiting", progress: 0 },
-          { key: "vision", label: "智慧裁剪", detail: "Vision", status: "waiting", progress: 0 },
-          { key: "render", label: "影音渲染", detail: "FFmpeg", status: "waiting", progress: 0 }
-        ]
-      }
-    ];
-    const MOCK_GALLERY = [
-      { fileName: "founder-podcast_clip_001.mp4", duration: "00:42", createdAt: "2026-07-06 14:12", resolution: "720x1280", folderPath: "output\\jobs\\podcast_highlights_042\\renders", accent: "lime" },
-      { fileName: "launch-keynote_hook_003.mp4", duration: "01:06", createdAt: "2026-07-06 15:31", resolution: "720x1280", folderPath: "output\\jobs\\creator_launch_reel\\renders", accent: "sky" },
-      { fileName: "tutorial_before_after.mp4", duration: "00:31", createdAt: "2026-07-06 11:08", resolution: "1080x1920", folderPath: "output\\jobs\\tutorial_batch\\renders", accent: "orange" }
-    ];
-
-    let jobs = [...INITIAL_JOBS, ...MOCK_JOBS];
-    let gallery = [...INITIAL_GALLERY, ...MOCK_GALLERY];
+    let jobs = [...INITIAL_JOBS];
+    let gallery = [...INITIAL_GALLERY];
     let activeJobId = SELECTED_JOB_ID || (jobs[0] && jobs[0].id);
     let eventSource = null;
     const logLines = [
@@ -585,6 +557,14 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
 
     function renderJobs() {
       const list = document.getElementById("jobList");
+      if (!jobs.length) {
+        list.innerHTML = `
+          <div class="rounded-lg border border-dashed border-white/15 bg-white/[0.03] p-4 text-sm text-slate-400">
+            尚無真實任務。建立新任務後會出現在這裡。
+          </div>
+        `;
+        return;
+      }
       list.innerHTML = jobs.map(job => `
         <button data-job-id="${escapeAttr(job.id)}" class="job-pick w-full rounded-lg border ${job.id === activeJobId ? "border-sky-300/50 bg-sky-300/10" : "border-white/10 bg-white/[0.03] hover:border-white/20"} p-3 text-left">
           <div class="flex items-center justify-between gap-3">
@@ -632,21 +612,37 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
 
     function renderGallery() {
       const grid = document.getElementById("gallery");
+      if (!gallery.length) {
+        grid.innerHTML = `
+          <div class="rounded-xl border border-dashed border-white/15 bg-black/20 p-6 md:col-span-2 xl:col-span-3">
+            <div class="flex items-start gap-3">
+              <i data-lucide="archive-x" class="mt-1 h-6 w-6 text-orange-300"></i>
+              <div>
+                <h3 class="font-black">目前沒有可操作的真實產出物</h3>
+                <p class="mt-2 text-sm leading-6 text-slate-400">跑完 analyze / transcribe / select-clips 後，這裡會顯示實際存在於 output/jobs 的 MP4、WAV、JSON artifacts。Render 階段完成後才會出現最終短影片 MP4。</p>
+              </div>
+            </div>
+          </div>
+        `;
+        lucide.createIcons();
+        return;
+      }
       grid.innerHTML = gallery.map(item => `
         <article class="rounded-xl border border-white/10 bg-black/20 p-4">
           <div class="mb-4 aspect-video rounded-lg border border-white/10 bg-gradient-to-br ${galleryGradient(item.accent)} p-3">
             <div class="flex h-full items-end justify-between">
               <span class="rounded-md bg-black/50 px-2 py-1 text-xs font-black text-white">${escapeHtml(item.duration)}</span>
-              <i data-lucide="film" class="h-6 w-6 text-white/80"></i>
+              <i data-lucide="${galleryIcon(item.kind)}" class="h-6 w-6 text-white/80"></i>
             </div>
           </div>
           <h3 class="truncate font-black">${escapeHtml(item.fileName)}</h3>
+          <p class="mt-1 truncate text-xs font-bold text-slate-500">${escapeHtml(item.jobId)} · ${escapeHtml(item.relativePath)}</p>
           <dl class="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-400">
             <div><dt class="font-bold text-slate-500">Created</dt><dd>${escapeHtml(item.createdAt)}</dd></div>
             <div><dt class="font-bold text-slate-500">Resolution</dt><dd>${escapeHtml(item.resolution)}</dd></div>
           </dl>
           <div class="mt-4 grid grid-cols-2 gap-2">
-            <button class="rounded-lg border border-sky-300/30 px-3 py-2 text-xs font-black text-sky-100 hover:bg-sky-300/10" onclick="playLocal('${escapeAttr(item.fileName)}')"><i data-lucide="play" class="mr-1 inline h-3 w-3"></i>本地播放</button>
+            ${primaryArtifactAction(item)}
             <button class="rounded-lg border border-lime-300/30 px-3 py-2 text-xs font-black text-lime-100 hover:bg-lime-300/10" onclick="openFolder('${escapeAttr(item.folderPath || "")}')"><i data-lucide="folder-open" class="mr-1 inline h-3 w-3"></i>開啟資料夾</button>
           </div>
         </article>
@@ -686,7 +682,8 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
     async function refreshJobs() {
       const response = await fetch("/api/jobs");
       const payload = await response.json();
-      jobs = [...payload.jobs, ...MOCK_JOBS];
+      jobs = [...payload.jobs];
+      gallery = [...(payload.gallery || [])];
       if (!jobs.find(job => job.id === activeJobId)) activeJobId = jobs[0] && jobs[0].id;
       logLines.push(`[dashboard] Refreshed ${payload.jobs.length} real job(s) from output/jobs`);
       render();
@@ -739,8 +736,59 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       }
     }
 
-    function playLocal(fileName) {
-      appendLogLine(`[player] Local playback placeholder for ${fileName}. Render media route will be wired after crop/render artifacts exist.`);
+    function primaryArtifactAction(item) {
+      if (item.kind === "video" || item.kind === "audio") {
+        return `<button class="rounded-lg border border-sky-300/30 px-3 py-2 text-xs font-black text-sky-100 hover:bg-sky-300/10" onclick="playLocal('${escapeAttr(item.mediaUrl || "")}', '${escapeAttr(item.fileName)}', '${escapeAttr(item.kind)}')"><i data-lucide="${item.kind === "audio" ? "volume-2" : "play"}" class="mr-1 inline h-3 w-3"></i>${item.kind === "audio" ? "播放音訊" : "本地播放"}</button>`;
+      }
+      if (item.artifactUrl) {
+        return `<a class="rounded-lg border border-sky-300/30 px-3 py-2 text-center text-xs font-black text-sky-100 hover:bg-sky-300/10" href="${escapeAttr(item.artifactUrl)}"><i data-lucide="file-json" class="mr-1 inline h-3 w-3"></i>檢視 JSON</a>`;
+      }
+      return `<button disabled class="cursor-not-allowed rounded-lg border border-white/10 px-3 py-2 text-xs font-black text-slate-500"><i data-lucide="ban" class="mr-1 inline h-3 w-3"></i>不可預覽</button>`;
+    }
+
+    function playLocal(mediaUrl, fileName, kind) {
+      if (!mediaUrl) {
+        appendLogLine(`[player] Missing media URL for ${fileName}`);
+        return;
+      }
+      appendLogLine(`[player] Opening ${fileName}`);
+      const modal = document.getElementById("mediaModal");
+      const title = document.getElementById("mediaTitle");
+      const video = document.getElementById("mediaVideo");
+      const audio = document.getElementById("mediaAudio");
+      title.textContent = fileName;
+      video.pause();
+      audio.pause();
+      video.classList.add("hidden");
+      audio.classList.add("hidden");
+      if (kind === "audio") {
+        audio.src = mediaUrl;
+        audio.classList.remove("hidden");
+        audio.play().catch(() => appendLogLine("[player] Browser blocked autoplay; press play manually."));
+      } else {
+        video.src = mediaUrl;
+        video.classList.remove("hidden");
+        video.play().catch(() => appendLogLine("[player] Browser blocked autoplay; press play manually."));
+      }
+      modal.classList.remove("hidden");
+    }
+
+    function closeMediaModal() {
+      const modal = document.getElementById("mediaModal");
+      const video = document.getElementById("mediaVideo");
+      const audio = document.getElementById("mediaAudio");
+      video.pause();
+      audio.pause();
+      video.removeAttribute("src");
+      audio.removeAttribute("src");
+      modal.classList.add("hidden");
+    }
+
+    function galleryIcon(kind) {
+      if (kind === "video") return "film";
+      if (kind === "audio") return "audio-lines";
+      if (kind === "json") return "file-json";
+      return "file";
     }
 
     function connectSseStream() {
@@ -1630,21 +1678,85 @@ def gallery_for_frontend(output_root: Path) -> list[dict]:
     gallery = []
     if not output_root.exists():
         return gallery
-    for render_path in sorted(output_root.glob("*/renders/*.mp4"), key=lambda path: path.stat().st_mtime, reverse=True):
-        job_dir = render_path.parents[1]
+    allowed_suffixes = {".mp4", ".mov", ".mkv", ".wav", ".json"}
+    for job_dir in sorted(output_root.iterdir(), key=lambda path: path.stat().st_mtime, reverse=True):
+        if not job_dir.is_dir():
+            continue
+        manifest = read_json_or_none(job_dir / "job_manifest.json") or {"job_id": job_dir.name}
+        job_id = manifest.get("job_id", job_dir.name)
         video_info = read_json_or_none(job_dir / "reports/video_info.json") or {}
-        stat = render_path.stat()
-        gallery.append(
-            {
-                "fileName": render_path.name,
-                "duration": format_seconds(video_info.get("duration")) if video_info else "unknown",
-                "createdAt": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M"),
-                "resolution": format_resolution(video_info) if video_info else "unknown",
-                "folderPath": str(render_path.parent),
-                "accent": "lime" if len(gallery) % 3 == 0 else "sky" if len(gallery) % 3 == 1 else "orange",
-            }
-        )
-    return gallery
+        audio_info = read_json_or_none(job_dir / "audio/audio_info.json") or {}
+        paths = [
+            path
+            for path in job_dir.rglob("*")
+            if path.is_file() and path.suffix.lower() in allowed_suffixes
+        ]
+        paths.sort(key=artifact_sort_key)
+        for artifact_path in paths[:18]:
+            gallery.append(artifact_card_for_frontend(output_root, job_dir, job_id, artifact_path, video_info, audio_info, len(gallery)))
+    return gallery[:36]
+
+
+def artifact_sort_key(path: Path) -> tuple[int, float]:
+    relative = str(path).replace("\\", "/")
+    priority = 5
+    if "/renders/" in relative and path.suffix.lower() in {".mp4", ".mov", ".mkv"}:
+        priority = 0
+    elif "/input/" in relative and path.suffix.lower() in {".mp4", ".mov", ".mkv"}:
+        priority = 1
+    elif "/audio/" in relative and path.suffix.lower() == ".wav":
+        priority = 2
+    elif path.suffix.lower() == ".json":
+        priority = 3
+    return priority, -path.stat().st_mtime
+
+
+def artifact_card_for_frontend(
+    output_root: Path,
+    job_dir: Path,
+    job_id: str,
+    artifact_path: Path,
+    video_info: dict,
+    audio_info: dict,
+    index: int,
+) -> dict:
+    relative_path = str(artifact_path.relative_to(job_dir)).replace("\\", "/")
+    suffix = artifact_path.suffix.lower()
+    kind = "json"
+    duration = "artifact"
+    resolution = "JSON"
+    media_url_value = ""
+    artifact_url = ""
+    if suffix in {".mp4", ".mov", ".mkv"}:
+        kind = "video"
+        duration = format_seconds(video_info.get("duration"))
+        resolution = format_resolution(video_info)
+        media_url_value = media_url(job_id, relative_path) or ""
+    elif suffix == ".wav":
+        kind = "audio"
+        duration = format_seconds(audio_info.get("duration"))
+        resolution = format_audio(audio_info)
+        media_url_value = media_url(job_id, relative_path) or ""
+    elif suffix == ".json":
+        artifact_url = f"/artifact?job={quote(job_id)}&path={quote(relative_path)}"
+
+    stat = artifact_path.stat()
+    accent = "lime" if index % 3 == 0 else "sky" if index % 3 == 1 else "orange"
+    return {
+        "id": f"{job_id}:{relative_path}",
+        "jobId": job_id,
+        "fileName": artifact_path.name,
+        "relativePath": relative_path,
+        "kind": kind,
+        "duration": duration,
+        "createdAt": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M"),
+        "resolution": resolution,
+        "folderPath": str(artifact_path.parent),
+        "mediaUrl": media_url_value,
+        "artifactUrl": artifact_url,
+        "sizeBytes": stat.st_size,
+        "accent": accent,
+    }
 
 
 def create_preview_job(output_root: Path, payload: dict) -> dict:
