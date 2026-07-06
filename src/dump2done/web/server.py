@@ -33,7 +33,10 @@ TOOLTIPS = {
     "影片分析": "讀取影片基本資料，例如長度、解析度、FPS、影音 codec。這一步使用 ffprobe。",
     "音訊抽取": "把影片音軌抽成 16kHz mono WAV，方便後續語音辨識。",
     "逐字稿": "使用 faster-whisper 把語音轉成段落與 word-level timestamps。",
-    "精華片段": "未來會用 LLM 從逐字稿中挑出可做短影音的候選片段。",
+    "精華片段": "把逐字稿切成語意 chunks，建立 LLM input，並產生候選短影音片段。",
+    "Semantic Chunks": "將 transcript 依時間與語意整理成較小段落，讓 LLM 不需要一次讀完整影片。",
+    "Clip Candidates": "目前由 deterministic baseline 產生，下一階段會接 Ollama 做內容判斷。",
+    "Validated Clips": "通過最短/最長時間限制的候選片段，後續會進入裁切與字幕流程。",
     "智慧裁切": "未來會分析主體位置，把橫式影片重構成 9:16 或 1:1。",
     "字幕": "未來會用 word timestamps 產生可燒錄的 ASS 動態字幕。",
     "輸出": "最後用 FFmpeg 輸出 MP4；這台 Qualcomm 本機先走 CPU encoder。",
@@ -176,6 +179,9 @@ def render_workspace(job: dict, env: dict) -> str:
     video = job.get("video_info") or {}
     audio = job.get("audio_info") or {}
     transcript = job.get("transcript_info") or {}
+    segments = job.get("segments_info") or {}
+    candidates = job.get("clip_candidates") or {}
+    validated = job.get("validated_clips") or {}
     input_path = manifest.get("input", {}).get("source_path")
     video_src = media_url(job_id, input_path) if input_path else None
     completed, total = stage_progress(manifest)
@@ -237,6 +243,7 @@ def render_workspace(job: dict, env: dict) -> str:
         </div>
         {render_platform_summary(env)}
         {render_transcript_summary(transcript)}
+        {render_clip_summary(segments, candidates, validated)}
         <div class="artifact-summary">
           <h3>Artifacts</h3>
           {raw_links}
@@ -328,6 +335,52 @@ def render_transcript_summary(transcript: dict) -> str:
         <span>{html.escape(str(transcript.get("word_count", 0)))} words</span>
       </div>
       <p>{html.escape(preview)}</p>
+    </div>
+    """
+
+
+def render_clip_summary(segments: dict, candidates: dict, validated: dict) -> str:
+    if not segments and not candidates and not validated:
+        return """
+        <div class="selection-card">
+          <h3>Clip Selection</h3>
+          <p class="muted">尚未產生語意切片。下一步會建立 segments、LLM input 與候選片段。</p>
+        </div>
+        """
+
+    chunk_count = segments.get("chunk_count", 0)
+    candidate_count = candidates.get("candidate_count", 0)
+    selected_count = validated.get("selected_count", 0)
+    reason = (
+        validated.get("empty_reason")
+        or candidates.get("empty_reason")
+        or segments.get("empty_reason")
+        or ""
+    )
+    candidate_rows = []
+    for candidate in (candidates.get("candidates") or [])[:3]:
+        candidate_rows.append(
+            f"""
+            <div class="candidate-row">
+              <strong>{html.escape(candidate.get("title", "Untitled clip"))}</strong>
+              <span>{html.escape(format_seconds(candidate.get("start")))} - {html.escape(format_seconds(candidate.get("end")))}</span>
+              <p>{html.escape(candidate.get("text_preview", ""))}</p>
+            </div>
+            """
+        )
+    candidate_list = "\n".join(candidate_rows)
+    if not candidate_list:
+        candidate_list = f'<p class="muted">{html.escape(reason or "目前沒有候選片段。")}</p>'
+
+    return f"""
+    <div class="selection-card">
+      <h3>Clip Selection</h3>
+      <div class="selection-stats">
+        <span>{tooltip("Semantic Chunks")} <strong>{html.escape(str(chunk_count))}</strong></span>
+        <span>{tooltip("Clip Candidates")} <strong>{html.escape(str(candidate_count))}</strong></span>
+        <span>{tooltip("Validated Clips")} <strong>{html.escape(str(selected_count))}</strong></span>
+      </div>
+      {candidate_list}
     </div>
     """
 
@@ -783,6 +836,9 @@ def list_jobs(output_root: Path) -> list[dict]:
                 "video_info": read_json_or_none(job_dir / "reports/video_info.json"),
                 "audio_info": read_json_or_none(job_dir / "audio/audio_info.json"),
                 "transcript_info": read_json_or_none(job_dir / "transcripts/transcript.json"),
+                "segments_info": read_json_or_none(job_dir / "transcripts/segments.json"),
+                "clip_candidates": read_json_or_none(job_dir / "llm/clip_candidates.json"),
+                "validated_clips": read_json_or_none(job_dir / "clips/validated_clips.json"),
             }
         )
     return jobs
@@ -848,9 +904,21 @@ def next_command_for_job(job_id: str, manifest: dict) -> dict[str, str]:
             "command": "python main.py transcribe --config configs\\qualcomm_windows_arm64.yaml --job-id "
             + job_id,
         }
+    if stages.get("select_clips") != "completed":
+        return {
+            "label": "建立語意切片與候選片段",
+            "command": "python main.py select-clips --config configs\\qualcomm_windows_arm64.yaml --job-id "
+            + job_id,
+        }
+    if stages.get("crop") != "completed":
+        return {
+            "label": "產生智慧裁切軌",
+            "command": "python main.py crop --config configs\\qualcomm_windows_arm64.yaml --job-id "
+            + job_id,
+        }
     return {
-        "label": "進入語意切片",
-        "command": "下一輪實作：segments.json + LLM clip candidates",
+        "label": "等待下一個 pipeline 階段",
+        "command": "目前下一階段開發：crop tracks + subtitle plan",
     }
 
 
@@ -893,6 +961,10 @@ def human_artifact_name(path: str) -> str:
         "audio/audio_info.json": "Audio info",
         "transcripts/transcript.json": "Transcript",
         "transcripts/words.json": "Words",
+        "transcripts/segments.json": "Semantic chunks",
+        "llm/llm_input.json": "LLM input",
+        "llm/clip_candidates.json": "Clip candidates",
+        "clips/validated_clips.json": "Validated clips",
         "reports/effective_config.json": "Config",
     }
     return mapping.get(path, Path(path).name)
@@ -1265,17 +1337,53 @@ def page(title: str, body: str) -> str:
     }}
     .facts {{ display: grid; gap: 10px; }}
     .artifact-summary {{ margin-top: 20px; }}
-    .transcript-card {{
+    .transcript-card, .selection-card {{
       margin-top: 18px;
       padding: 14px;
       border: 1px solid var(--line);
       border-radius: 8px;
       background: #0a0d11;
     }}
-    .transcript-card p {{
+    .transcript-card p, .selection-card p {{
       color: var(--soft);
       line-height: 1.55;
       font-size: 14px;
+    }}
+    .selection-stats {{
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      margin: 10px 0 12px;
+    }}
+    .selection-stats span {{
+      padding: 10px;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      color: var(--muted);
+      font-size: 12px;
+      min-width: 0;
+    }}
+    .selection-stats strong {{
+      display: block;
+      margin-top: 4px;
+      color: var(--ink);
+      font-size: 20px;
+    }}
+    .candidate-row {{
+      padding: 10px 0;
+      border-top: 1px solid var(--line);
+    }}
+    .candidate-row strong, .candidate-row span {{
+      display: block;
+    }}
+    .candidate-row span {{
+      color: #8fd3ff;
+      font-size: 12px;
+      margin-top: 4px;
+    }}
+    .candidate-row p {{
+      margin-bottom: 0;
     }}
     .mini-stats {{
       display: flex;
@@ -1352,6 +1460,7 @@ def page(title: str, body: str) -> str:
       .shell {{ padding: 18px; }}
       .topbar {{ display: grid; }}
       .metric-grid {{ grid-template-columns: 1fr; }}
+      .selection-stats {{ grid-template-columns: 1fr; }}
       h1 {{ font-size: 26px; }}
     }}
   </style>

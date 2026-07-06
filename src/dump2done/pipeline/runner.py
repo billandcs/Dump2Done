@@ -4,10 +4,11 @@ from pathlib import Path
 from typing import Any
 
 from dump2done.asr.faster_whisper_backend import transcribe_with_faster_whisper
-from dump2done.core.artifacts import stage_artifact, write_json
+from dump2done.core.artifacts import read_json, stage_artifact, write_json
 from dump2done.core.job import JobContext
 from dump2done.media.audio import extract_audio_wav, summarize_audio_info
 from dump2done.media.ffprobe import run_ffprobe, summarize_video_info
+from dump2done.pipeline.selection import build_selection_artifacts
 
 
 class PipelineRunner:
@@ -160,7 +161,53 @@ class PipelineRunner:
             raise
 
     def select_clips(self) -> None:
-        self._not_implemented("select_clips", "Phase 2 next: transcript chunking + LLM selection.")
+        self.job.create_or_update_manifest()
+        transcript_path = self.job.path("transcripts/transcript.json")
+        segments_path = self.job.path("transcripts/segments.json")
+        llm_input_path = self.job.path("llm/llm_input.json")
+        candidates_path = self.job.path("llm/clip_candidates.json")
+        validated_path = self.job.path("clips/validated_clips.json")
+
+        if not transcript_path.exists():
+            raise RuntimeError("Missing transcript artifact. Run transcribe first.")
+
+        if (
+            self.resume
+            and segments_path.exists()
+            and llm_input_path.exists()
+            and candidates_path.exists()
+            and validated_path.exists()
+        ):
+            self.job.mark_stage("select_clips", "completed")
+            print(
+                "Reused existing artifacts: "
+                f"{segments_path}, {llm_input_path}, {candidates_path}, {validated_path}"
+            )
+            return
+
+        self.job.mark_stage("select_clips", "running")
+        try:
+            transcript = read_json(transcript_path)
+            artifacts = build_selection_artifacts(transcript, self.config)
+            write_json(segments_path, artifacts["segments"])
+            write_json(llm_input_path, artifacts["llm_input"])
+            write_json(candidates_path, artifacts["clip_candidates"])
+            write_json(validated_path, artifacts["validated_clips"])
+            self.job.mark_stage("select_clips", "completed")
+            print(f"Wrote {segments_path}")
+            print(f"Wrote {llm_input_path}")
+            print(f"Wrote {candidates_path}")
+            print(f"Wrote {validated_path}")
+        except Exception as exc:
+            artifact = stage_artifact(
+                "select_clips",
+                "failed",
+                source="transcripts/transcript.json",
+                errors=[{"message": str(exc)}],
+            )
+            write_json(candidates_path, artifact)
+            self.job.mark_stage("select_clips", "failed")
+            raise
 
     def crop(self) -> None:
         self._not_implemented("crop", "Phase 2 next: low-fps face detection + crop smoothing.")
