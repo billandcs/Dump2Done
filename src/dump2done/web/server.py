@@ -674,7 +674,7 @@ def strip_ansi(value: str) -> str:
 def render_job_control_dashboard(output_root: Path, selected_job_id: str | None) -> str:
     initial_jobs = jobs_for_frontend(output_root)
     initial_gallery = gallery_for_frontend(output_root)
-    selected_id = selected_job_id or (initial_jobs[0]["id"] if initial_jobs else "")
+    selected_id = selected_job_id or ""
     template = r"""<!doctype html>
 <html lang="zh-Hant">
 <head>
@@ -898,7 +898,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         <div class="mb-5 flex flex-wrap items-start justify-between gap-3">
           <div class="min-w-0">
             <p class="text-xs font-black uppercase tracking-[0.22em] text-sky-300" data-i18n="liveTracker">Live Pipeline Tracker</p>
-            <h2 id="activeJobTitle" class="mt-2 max-w-[760px] truncate text-xl font-black md:text-2xl" data-i18n="selectJob">選擇任務</h2>
+            <h2 id="activeJobTitle" class="mt-2 max-w-[760px] truncate text-xl font-black md:text-2xl">選擇任務</h2>
             <p id="activeJobMeta" class="mt-2 max-w-[760px] truncate text-xs font-semibold text-slate-500"></p>
           </div>
           <div class="flex flex-wrap justify-end gap-2">
@@ -1104,6 +1104,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
     const SELECTED_JOB_ID = "__SELECTED_JOB_ID__";
     let jobs = [...INITIAL_JOBS];
     let gallery = [...INITIAL_GALLERY].filter(isMediaGalleryItem);
+    let manualJobSelection = Boolean(SELECTED_JOB_ID);
     let activeJobId = SELECTED_JOB_ID || chooseDefaultJobId(jobs);
     let eventSource = null;
     let selectedMediaItems = [];
@@ -1171,6 +1172,17 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         idleMeta: "建立新任務後會在這裡顯示即時進度；也可以從任務佇列點選歷史任務查看細節。",
         idleCurrent: "等待新任務",
         idleProgress: "--",
+        idleState: "待命",
+        idleNoStep: "尚未開始",
+        historyTitle: "歷史任務結果",
+        historyMeta: "這是已結束的任務紀錄，不代表目前正在執行。",
+        failedAt: "失敗於",
+        completedAt: "完成於",
+        cancelledAt: "取消於",
+        interruptedAt: "中斷於",
+        notCompleted: "未完成",
+        noLiveJobFlow: "目前沒有執行中的任務。上傳圖片或影片後，這裡才會出現即時工作流。",
+        rerunSuggestion: "可調整提示詞、切換 provider，或重新上傳建立新任務。",
         runnerInterrupted: "runner 已中斷",
         restartRequired: "需要重新建立或重跑任務",
         statusRunning: "執行中",
@@ -1335,6 +1347,17 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         idleMeta: "Create a new job to see live progress here, or select a history item from the queue.",
         idleCurrent: "Waiting",
         idleProgress: "--",
+        idleState: "Idle",
+        idleNoStep: "Not started",
+        historyTitle: "Historical job result",
+        historyMeta: "This job has already ended; it is not the currently running workflow.",
+        failedAt: "Failed at",
+        completedAt: "Completed at",
+        cancelledAt: "Cancelled at",
+        interruptedAt: "Interrupted at",
+        notCompleted: "Not completed",
+        noLiveJobFlow: "No job is currently running. Upload an image or video to start live workflow tracking.",
+        rerunSuggestion: "Adjust the prompt, switch provider, or upload again to create a new job.",
         runnerInterrupted: "Runner interrupted",
         restartRequired: "Create or rerun this job",
         statusRunning: "Running",
@@ -1499,6 +1522,17 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         idleMeta: "新しいジョブを作成するとここにリアルタイム進捗が表示されます。履歴はジョブキューから選択できます。",
         idleCurrent: "待機中",
         idleProgress: "--",
+        idleState: "待機中",
+        idleNoStep: "未開始",
+        historyTitle: "履歴ジョブ結果",
+        historyMeta: "これは終了済みのジョブ記録で、現在実行中のワークフローではありません。",
+        failedAt: "失敗ステージ",
+        completedAt: "完了ステージ",
+        cancelledAt: "キャンセルステージ",
+        interruptedAt: "中断ステージ",
+        notCompleted: "未完了",
+        noLiveJobFlow: "現在実行中のジョブはありません。画像または動画をアップロードするとライブ追跡が始まります。",
+        rerunSuggestion: "プロンプトを調整するか、provider を切り替えるか、再アップロードしてください。",
         runnerInterrupted: "runner が中断されました",
         restartRequired: "ジョブを再作成または再実行してください",
         statusRunning: "実行中",
@@ -1831,12 +1865,20 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
     }
 
     function chooseDefaultJobId(items) {
-      const actionable = (items || []).filter(job => ["running", "cancelling", "queued"].includes(job.status));
+      const actionable = (items || []).filter(isLiveJob);
       const ordered = [...actionable].sort((a, b) => {
         const weight = { running: 0, cancelling: 1, queued: 2 };
         return (weight[a.status] ?? 9) - (weight[b.status] ?? 9) || String(b.updatedAt || "").localeCompare(String(a.updatedAt || ""));
       });
       return ordered[0] ? ordered[0].id : "";
+    }
+
+    function isLiveJob(job) {
+      return Boolean(job && ["running", "cancelling", "queued"].includes(job.status));
+    }
+
+    function isHistoricalJob(job) {
+      return Boolean(job && !isLiveJob(job));
     }
 
     function renderStats() {
@@ -1855,11 +1897,11 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       }
       const phase = activePhase(job);
       state.textContent = statusLabel(job.status);
-      progress.textContent = `${overallProgress(job)}%`;
-      current.textContent = job.status === "interrupted" ? t("runnerInterrupted") : phase ? phase.label : t("noNextStep");
+      progress.textContent = progressSummary(job);
+      current.textContent = currentSummary(job, phase);
       state.className = `block truncate text-sm ${statusTextClass(job.status)}`;
-      progress.className = "block text-sm text-lime-300";
-      current.className = "block truncate text-sm text-orange-300";
+      progress.className = `block text-sm ${isLiveJob(job) ? "text-lime-300" : statusTextClass(job.status)}`;
+      current.className = `block truncate text-sm ${isLiveJob(job) ? "text-orange-300" : "text-slate-400"}`;
     }
 
     function renderJobs() {
@@ -1897,6 +1939,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       document.querySelectorAll(".job-pick").forEach(button => {
         button.addEventListener("click", () => {
           activeJobId = button.dataset.jobId;
+          manualJobSelection = true;
           render();
           connectSseStream();
         });
@@ -1930,17 +1973,20 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         cancelButton.classList.add("hidden");
         target.innerHTML = `
           <div class="rounded-xl border border-dashed border-white/15 bg-white/[0.03] p-5 text-sm leading-6 text-slate-400 md:col-span-2 xl:col-span-4">
-            ${escapeHtml(t("noTaskFlow"))}
+            ${escapeHtml(t("noLiveJobFlow"))}
           </div>
         `;
         return;
       }
-      title.textContent = `${displayJobName(job.id)} · ${statusLabel(job.status)}`;
-      title.title = job.id;
-      meta.textContent = `${t("activeTracking")} · ${compactPath(job.videoPath || job.outputDirectory || "")}`;
-      const currentPhase = activePhase(job);
-      const nextPhase = nextWaitingPhase(job);
+      const isHistory = isHistoricalJob(job);
+      const displayPhase = isHistory ? finalPhase(job) : activePhase(job);
+      const nextPhase = isHistory ? null : nextWaitingPhase(job);
       const overall = overallProgress(job);
+      title.textContent = isHistory ? t("historyTitle") : `${displayJobName(job.id)} · ${statusLabel(job.status)}`;
+      title.title = job.id;
+      meta.textContent = isHistory
+        ? `${t("historyMeta")} · ${displayJobName(job.id)}`
+        : `${t("activeTracking")} · ${compactPath(job.videoPath || job.outputDirectory || "")}`;
       const canCancel = ["running", "queued", "cancelling"].includes(job.status);
       cancelButton.classList.toggle("hidden", !canCancel);
       cancelButton.disabled = job.status === "cancelling";
@@ -1949,20 +1995,20 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         <div class="grid gap-4 lg:grid-cols-[1fr_1fr_160px] lg:items-center">
           <div>
             <p class="text-xs font-black uppercase tracking-wide text-sky-300">${escapeHtml(t("currentStep"))}</p>
-            <p class="mt-1 text-lg font-black text-slate-100">${escapeHtml(job.status === "interrupted" ? t("runnerInterrupted") : currentPhase ? `${currentPhase.label} · ${currentPhase.progress}%` : t("waitingForRunner"))}</p>
-            <p class="mt-1 text-xs font-semibold text-slate-500">${escapeHtml(job.status === "interrupted" ? t("restartRequired") : currentPhase ? currentPhase.detail : statusLabel(job.status))}</p>
+            <p class="mt-1 text-lg font-black text-slate-100">${escapeHtml(isHistory ? currentSummary(job, displayPhase) : displayPhase ? `${displayPhase.label} · ${displayPhase.progress}%` : t("waitingForRunner"))}</p>
+            <p class="mt-1 text-xs font-semibold text-slate-500">${escapeHtml(isHistory ? t("historyMeta") : displayPhase ? displayPhase.detail : statusLabel(job.status))}</p>
           </div>
           <div>
             <p class="text-xs font-black uppercase tracking-wide text-lime-300">${escapeHtml(t("nextStep"))}</p>
-            <p class="mt-1 text-sm font-bold text-slate-300">${escapeHtml(job.status === "interrupted" ? t("restartRequired") : nextPhase ? `${nextPhase.label} · ${nextPhase.detail}` : t("noNextStep"))}</p>
+            <p class="mt-1 text-sm font-bold text-slate-300">${escapeHtml(isHistory ? t("rerunSuggestion") : nextPhase ? `${nextPhase.label} · ${nextPhase.detail}` : t("noNextStep"))}</p>
           </div>
           <div>
             <p class="text-xs font-black uppercase tracking-wide text-slate-500">${escapeHtml(t("overallProgress"))}</p>
-            <p class="mt-1 text-3xl font-black text-lime-200">${overall}%</p>
+            <p class="mt-1 text-3xl font-black ${isHistory ? statusTextClass(job.status) : "text-lime-200"}">${escapeHtml(progressSummary(job))}</p>
           </div>
         </div>
         <div class="mt-4 h-2 overflow-hidden rounded-full bg-black/40">
-          <div class="relative h-full overflow-hidden rounded-full bg-lime-300 ${job.status === "running" ? "pipeline-flow" : ""}" style="width:${overall}%"></div>
+          <div class="relative h-full overflow-hidden rounded-full ${isHistory ? "bg-slate-500" : "bg-lime-300"} ${job.status === "running" ? "pipeline-flow" : ""}" style="width:${isHistory && job.status !== "completed" ? Math.max(8, overall) : overall}%"></div>
         </div>
       `;
       target.innerHTML = job.phases.map((phase, index) => `
@@ -1994,6 +2040,34 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
 
     function nextWaitingPhase(job) {
       return (job.phases || []).find(phase => phase.status === "waiting") || null;
+    }
+
+    function finalPhase(job) {
+      const phases = job.phases || [];
+      if (job.status === "failed") return phases.find(phase => phase.status === "failed") || activePhase(job);
+      if (job.status === "cancelled") return phases.find(phase => phase.status === "cancelled") || activePhase(job);
+      if (job.status === "interrupted") return phases.find(phase => phase.status === "running") || phases.find(phase => phase.status === "waiting") || activePhase(job);
+      if (job.status === "completed") return [...phases].reverse().find(phase => phase.status === "completed") || activePhase(job);
+      return activePhase(job);
+    }
+
+    function progressSummary(job) {
+      if (isLiveJob(job)) return `${overallProgress(job)}%`;
+      if (job.status === "completed") return t("statusCompleted");
+      if (job.status === "failed") return t("notCompleted");
+      if (job.status === "cancelled") return t("statusCancelled");
+      if (job.status === "interrupted") return t("statusInterrupted");
+      return t("idleProgress");
+    }
+
+    function currentSummary(job, phase = null) {
+      const target = phase || finalPhase(job);
+      if (isLiveJob(job)) return target ? target.label : t("idleNoStep");
+      if (job.status === "completed") return target ? `${t("completedAt")} ${target.label}` : t("statusCompleted");
+      if (job.status === "failed") return target ? `${t("failedAt")} ${target.label}` : t("statusFailed");
+      if (job.status === "cancelled") return target ? `${t("cancelledAt")} ${target.label}` : t("statusCancelled");
+      if (job.status === "interrupted") return target ? `${t("interruptedAt")} ${target.label}` : t("runnerInterrupted");
+      return t("idleNoStep");
     }
 
     function overallProgress(job) {
@@ -2089,7 +2163,11 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       const payload = await response.json();
       jobs = [...payload.jobs];
       gallery = [...(payload.gallery || [])].filter(isMediaGalleryItem);
-      if (!jobs.find(job => job.id === activeJobId)) activeJobId = chooseDefaultJobId(jobs);
+      const activeJob = jobs.find(job => job.id === activeJobId);
+      if (!activeJob || (!manualJobSelection && !isLiveJob(activeJob))) {
+        activeJobId = chooseDefaultJobId(jobs);
+        manualJobSelection = false;
+      }
       logLines.push(`[dashboard] Refreshed ${payload.jobs.length} real job(s) from output/jobs`);
       render();
     }
@@ -2341,6 +2419,13 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       if (showHint) {
         document.getElementById("formHint").textContent = t("mediaSelectionCleared");
       }
+      const activeJob = jobs.find(job => job.id === activeJobId);
+      if (activeJob && isHistoricalJob(activeJob)) {
+        activeJobId = chooseDefaultJobId(jobs);
+        manualJobSelection = false;
+        renderStats();
+        renderPipeline();
+      }
       lucide.createIcons();
     }
 
@@ -2389,6 +2474,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
           jobs = [payload.job, ...jobs];
           gallery = [...(payload.gallery || []), ...gallery].filter(isMediaGalleryItem);
           activeJobId = payload.job.id;
+          manualJobSelection = true;
           appendLogLine(`[api] Created ${payload.media_type} job ${payload.job.id}`);
           appendLogLine(`[media] ${payload.message}`);
           if (payload.command) appendLogLine(`[next] ${payload.command}`);
@@ -2693,6 +2779,12 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         return;
       }
       if (eventSource) eventSource.close();
+      const activeJob = jobs.find(item => item.id === activeJobId);
+      if (!isLiveJob(activeJob)) {
+        eventSource = null;
+        appendLogLine("[sse] idle; no live job to stream");
+        return;
+      }
       const url = `/api/stream-logs?job=${encodeURIComponent(activeJobId || "")}`;
       eventSource = new EventSource(url);
       appendLogLine(`[sse] connecting ${url}`);
