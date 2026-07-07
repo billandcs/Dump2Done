@@ -59,6 +59,15 @@ Open:
 http://127.0.0.1:8765/
 ```
 
+On Qualcomm Windows ARM64 machines, use the native ARM64 virtual environment:
+
+```powershell
+.\scripts\start_dashboard_arm64.ps1
+```
+
+The expected environment report should show `python_machine: ARM64` and
+`likely_emulated_python: false`.
+
 The dashboard includes:
 
 - image/video upload

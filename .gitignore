@@ -4,8 +4,9 @@ __pycache__/
 .ruff_cache/
 .mypy_cache/
 .venv/
+.venv-arm64/
 venv/
 env/
+*.egg-info/
 output/
 *.log
-

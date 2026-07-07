@@ -27,8 +27,10 @@ from urllib import request as urllib_request
 
 
 SRC_ROOT = Path(__file__).resolve().parents[2]
-if str(SRC_ROOT) not in sys.path:
-    sys.path.insert(0, str(SRC_ROOT))
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+for import_root in (SRC_ROOT, PROJECT_ROOT):
+    if str(import_root) not in sys.path:
+        sys.path.insert(0, str(import_root))
 
 from dump2done.pipeline.video_edit import VideoEditCancelled, run_local_video_edit
 
