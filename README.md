@@ -40,6 +40,7 @@ Current local-first layers:
 | Local video runner | MVP | FFmpeg frame extraction, deterministic Pillow frame edits, MP4 render. No true AI segmentation yet. |
 | Live job tracking | Working | SSE log/status stream, active job tracker, cancel request support. |
 | Artifact gallery | Working | Shows produced images, videos, and audio only. JSON/debug files stay in job folders. |
+| Provider health cards | Working | Settings panel checks Pillow, FFmpeg, Faster-Whisper, Ollama, Automatic1111, ComfyUI, and OpenAI key readiness. |
 | Qualcomm platform support | MVP | Qualcomm Windows on ARM is treated as the local-first target; CPU/FFmpeg path is preferred. |
 | QNN / DirectML acceleration | Not implemented | Dashboard can report readiness, but model acceleration is not wired into production tasks yet. |
 | Full AI video editing | Not implemented | Precise clothing/person tracking, segmentation, and high-quality generative video edits are future work. |
@@ -69,6 +70,7 @@ The dashboard includes:
 - output gallery with preview/play/delete/open-folder actions
 - settings panel for local/cloud provider routing
 - local-first provider migration settings
+- provider health cards and local readiness summary
 - Traditional Chinese default UI, with English/Japanese language switching
 
 ### Environment Dashboard
@@ -284,7 +286,6 @@ output/                              Local generated jobs, reports, logs, export
 
 ## Roadmap
 
-- Make provider health visible in the settings panel: local ready, missing model, missing API key, cloud disabled.
 - Add ComfyUI workflow JSON configuration and queue submission.
 - Add local model install/readiness guide for Stable Diffusion or FLUX on Windows.
 - Add true segmentation/tracking backend for clothing/person edits.

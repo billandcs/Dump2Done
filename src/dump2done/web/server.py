@@ -6,6 +6,7 @@ import base64
 import binascii
 import contextlib
 import html
+import importlib.util
 import json
 import mimetypes
 import os
@@ -115,6 +116,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/settings":
             self._send_json({"status": "ok", "settings": load_dashboard_settings(self.output_root)})
+            return
+        if parsed.path == "/api/provider-health":
+            self._send_json(provider_health_report(self.output_root))
             return
         if parsed.path == "/artifact":
             query = parse_qs(parsed.query)
@@ -1038,6 +1042,18 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
               <p class="text-xs font-black text-lime-200" data-i18n="computeHelpPanelTitle">設定說明</p>
               <p id="computeHelpText" class="mt-2 text-xs leading-5 text-slate-400" data-i18n="computeHelpDefault">點擊欄位標題旁的問號，可以查看各項本地/線上運算設定的差別與未來用途。</p>
             </div>
+            <div class="rounded-xl border border-lime-300/20 bg-lime-300/[0.035] p-3">
+              <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p class="text-xs font-black uppercase tracking-wide text-lime-200" data-i18n="providerHealthTitle">本地化進度</p>
+                  <p id="providerHealthSummary" class="mt-1 text-xs leading-5 text-slate-400" data-i18n="providerHealthLoading">正在檢查本機 provider...</p>
+                </div>
+                <button id="refreshProviderHealth" class="inline-flex items-center gap-2 rounded-lg border border-lime-300/25 bg-black/20 px-3 py-2 text-xs font-black text-lime-100 hover:bg-lime-300/10" type="button">
+                  <i data-lucide="refresh-cw" class="h-3.5 w-3.5"></i><span data-i18n="refreshProviderHealth">重掃</span>
+                </button>
+              </div>
+              <div id="providerHealthGrid" class="grid gap-2 md:grid-cols-2"></div>
+            </div>
             <div class="grid gap-3 md:grid-cols-2">
               <label class="grid gap-2">
                 <span class="flex items-center gap-2 text-xs font-black uppercase tracking-wide text-slate-400">
@@ -1135,6 +1151,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
     let pendingDeleteId = "";
     let activeComputeHelpKey = "";
     let activeVideoOptionHelpKey = "";
+    let providerHealth = null;
     const logLines = [
       "[dashboard] Booted Dump2Done local control plane on http://127.0.0.1:8765/",
       "[runner] Qualcomm profile loaded: CPU int8, single worker, ffmpeg libx264",
@@ -1330,6 +1347,16 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         computeHelpPanelTitle: "設定說明",
         computeHelpDefault: "點擊欄位標題旁的問號，可以查看各項本地/線上運算設定的差別與未來用途。",
         helpButtonLabel: "查看此設定說明",
+        providerHealthTitle: "本地化進度",
+        providerHealthLoading: "正在檢查本機 provider...",
+        providerHealthSummary: "本地 provider 已就緒 {ready}/{total}，完成度 {percent}%。",
+        refreshProviderHealth: "重掃",
+        providerReady: "可用",
+        providerSetup: "待設定",
+        providerMissing: "缺少",
+        providerCloud: "雲端",
+        providerBlocked: "關閉",
+        providerUnknown: "未知",
         localLlmProviderHelp: "決定文字理解、任務規劃、prompt 解析要交給誰。Ollama local 是本地優先路線；OpenAI online fallback 只在本地模型不足且你允許時作為過渡；None 則關閉這類 LLM 路由。",
         localLlmEndpointHelp: "本地 LLM 服務網址，例如 Ollama 預設是 http://127.0.0.1:11434。未來後端會用它檢查模型列表、送出結構化 prompt、取得剪輯或編輯計畫。現在只保存設定，不會主動連線。",
         visionProviderHelp: "決定圖片/影片視覺處理走哪條路。Local Pillow / FFmpeg MVP 是目前已能本地輸出的基礎版；ONNX DirectML 與 Qualcomm QNN 是本地化目標，會逐步承接 segmentation、tracking、影像模型。線上路線只作為明確 fallback。",
@@ -1516,6 +1543,16 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         computeHelpPanelTitle: "Setting Help",
         computeHelpDefault: "Click the question mark next to a label to see what each local/online compute setting means.",
         helpButtonLabel: "Show help for this setting",
+        providerHealthTitle: "Local readiness",
+        providerHealthLoading: "Checking local providers...",
+        providerHealthSummary: "Local providers ready {ready}/{total}; readiness {percent}%.",
+        refreshProviderHealth: "Rescan",
+        providerReady: "Ready",
+        providerSetup: "Setup",
+        providerMissing: "Missing",
+        providerCloud: "Cloud",
+        providerBlocked: "Off",
+        providerUnknown: "Unknown",
         localLlmProviderHelp: "Chooses who handles text reasoning, task planning, and prompt parsing. Ollama local is the local-first route; OpenAI online fallback is a bridge only when local planning is not enough and you allow it; None disables this LLM route.",
         localLlmEndpointHelp: "The local LLM service URL. Ollama commonly uses http://127.0.0.1:11434. Later the backend can use this to inspect models, send structured prompts, and receive edit plans. For now it is only saved.",
         visionProviderHelp: "Chooses the image/video processing route. Local Pillow / FFmpeg MVP is the current local output path. ONNX DirectML and Qualcomm QNN are local migration targets for segmentation, tracking, and vision models. Online routes are explicit fallback only.",
@@ -1698,10 +1735,20 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         fallbackWarnOnly: "警告のみ、自動オンライン送信なし",
         fallbackDisabled: "オンライン fallback を無効化",
         fallbackAskEachTime: "オンライン利用前に毎回確認",
-        onlineFallbackHelp: "デモ設定：現時点ではオンラインサービスを呼び出しません。将来のタスクルーティング用です。",
+        onlineFallbackHelp: "ローカル優先ポリシーです。ローカル provider で不足し、明示的に許可した場合のみオンライン fallback を使います。",
         computeHelpPanelTitle: "設定ヘルプ",
         computeHelpDefault: "ラベル横の ? をクリックすると、各ローカル/オンライン計算設定の意味を確認できます。",
         helpButtonLabel: "この設定の説明を見る",
+        providerHealthTitle: "ローカル化進捗",
+        providerHealthLoading: "ローカル provider を確認中...",
+        providerHealthSummary: "ローカル provider は {ready}/{total} 利用可能、進捗 {percent}%。",
+        refreshProviderHealth: "再スキャン",
+        providerReady: "利用可",
+        providerSetup: "要設定",
+        providerMissing: "不足",
+        providerCloud: "クラウド",
+        providerBlocked: "無効",
+        providerUnknown: "不明",
         localLlmProviderHelp: "テキスト理解、タスク計画、prompt 解析をどこで処理するかを決めます。Ollama local はローカル優先ルート、OpenAI online fallback はローカルで不足し許可された場合の過渡的な候補、None は LLM ルート無効です。",
         localLlmEndpointHelp: "ローカル LLM サービスの URL です。Ollama は通常 http://127.0.0.1:11434 を使います。将来はモデル一覧確認、構造化 prompt、編集計画の取得に使います。今は保存のみです。",
         visionProviderHelp: "画像/動画処理ルートを決めます。Local Pillow / FFmpeg MVP は現在のローカル出力ルート。ONNX DirectML と Qualcomm QNN は segmentation、tracking、Vision モデルをローカル GPU/NPU へ移す目標です。オンラインは明示的な fallback として扱います。",
@@ -1761,6 +1808,97 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       }
     }
 
+    async function loadProviderHealth() {
+      const summary = document.getElementById("providerHealthSummary");
+      const grid = document.getElementById("providerHealthGrid");
+      if (!summary || !grid) return;
+      summary.textContent = t("providerHealthLoading");
+      grid.innerHTML = `
+        <div class="rounded-lg border border-white/10 bg-black/25 p-3 text-xs font-bold text-slate-400 md:col-span-2">
+          ${escapeHtml(t("providerHealthLoading"))}
+        </div>
+      `;
+      try {
+        const response = await fetch("/api/provider-health");
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.message || "Provider health failed");
+        providerHealth = payload;
+        renderProviderHealth();
+      } catch (error) {
+        summary.textContent = error.message;
+        grid.innerHTML = `
+          <div class="rounded-lg border border-red-300/30 bg-red-300/10 p-3 text-xs font-bold text-red-100 md:col-span-2">
+            ${escapeHtml(error.message)}
+          </div>
+        `;
+      } finally {
+        lucide.createIcons();
+      }
+    }
+
+    function renderProviderHealth() {
+      const summary = document.getElementById("providerHealthSummary");
+      const grid = document.getElementById("providerHealthGrid");
+      if (!summary || !grid || !providerHealth) return;
+      const data = providerHealth.summary || {};
+      summary.textContent = t("providerHealthSummary")
+        .replace("{ready}", data.ready_local ?? 0)
+        .replace("{total}", data.total_local ?? 0)
+        .replace("{percent}", data.percent ?? 0);
+      const items = providerHealth.items || [];
+      grid.innerHTML = items.map(providerHealthCardHtml).join("");
+      lucide.createIcons();
+    }
+
+    function providerHealthCardHtml(item) {
+      const tone = providerHealthTone(item.state);
+      const icon = item.icon || "cpu";
+      return `
+        <article class="min-w-0 rounded-lg border ${tone.card} p-3">
+          <div class="flex items-start justify-between gap-3">
+            <div class="min-w-0">
+              <div class="flex items-center gap-2">
+                <span class="grid h-8 w-8 shrink-0 place-items-center rounded-lg ${tone.icon}">
+                  <i data-lucide="${escapeAttr(icon)}" class="h-4 w-4"></i>
+                </span>
+                <h4 class="min-w-0 truncate text-sm font-black text-slate-100">${escapeHtml(item.label || "")}</h4>
+              </div>
+              <p class="mt-2 text-xs leading-5 text-slate-400">${escapeHtml(item.detail || "")}</p>
+            </div>
+            <span class="shrink-0 rounded-full px-2 py-1 text-[10px] font-black ${tone.badge}">${escapeHtml(providerStateLabel(item.state))}</span>
+          </div>
+          <p class="mt-3 rounded-md bg-black/25 px-3 py-2 text-xs leading-5 text-slate-300">${escapeHtml(item.action || "")}</p>
+        </article>
+      `;
+    }
+
+    function providerHealthTone(state) {
+      if (state === "ready") {
+        return { card: "border-lime-300/30 bg-lime-300/[0.055]", icon: "bg-lime-300/15 text-lime-200", badge: "bg-lime-300/15 text-lime-200" };
+      }
+      if (state === "cloud") {
+        return { card: "border-sky-300/30 bg-sky-300/[0.055]", icon: "bg-sky-300/15 text-sky-200", badge: "bg-sky-300/15 text-sky-200" };
+      }
+      if (state === "blocked") {
+        return { card: "border-slate-500/30 bg-slate-500/[0.055]", icon: "bg-slate-300/10 text-slate-300", badge: "bg-slate-300/10 text-slate-300" };
+      }
+      if (state === "missing") {
+        return { card: "border-red-300/30 bg-red-300/[0.055]", icon: "bg-red-300/15 text-red-200", badge: "bg-red-300/15 text-red-200" };
+      }
+      return { card: "border-orange-300/30 bg-orange-300/[0.055]", icon: "bg-orange-300/15 text-orange-200", badge: "bg-orange-300/15 text-orange-200" };
+    }
+
+    function providerStateLabel(state) {
+      const key = {
+        ready: "providerReady",
+        setup: "providerSetup",
+        missing: "providerMissing",
+        cloud: "providerCloud",
+        blocked: "providerBlocked",
+      }[state] || "providerUnknown";
+      return t(key);
+    }
+
     async function saveSettingsToServer() {
       const response = await fetch("/api/settings", {
         method: "POST",
@@ -1809,6 +1947,9 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       }
       if (activeVideoOptionHelpKey) {
         showVideoOptionHelp(activeVideoOptionHelpKey);
+      }
+      if (providerHealth) {
+        renderProviderHealth();
       }
     }
 
@@ -1878,6 +2019,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       applySettingsToUi();
       document.getElementById("settingsHint").textContent = "";
       document.getElementById("settingsModal").classList.remove("hidden");
+      loadProviderHealth();
     }
 
     function openImageOutputSettings() {
@@ -1905,6 +2047,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       lucide.createIcons();
       document.getElementById("settingsHint").textContent = message;
       appendLogLine(`[settings] ${message}`);
+      loadProviderHealth();
       closeSettingsModal();
     }
 
@@ -2324,6 +2467,10 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       updateEditorMode(currentMediaType);
     });
     document.getElementById("settingsButton").addEventListener("click", openSettingsModal);
+    document.getElementById("refreshProviderHealth").addEventListener("click", event => {
+      event.preventDefault();
+      loadProviderHealth();
+    });
     document.getElementById("imageOutputSettingsButton").addEventListener("click", openImageOutputSettings);
     document.getElementById("closeSettings").addEventListener("click", closeSettingsModal);
     document.getElementById("settingsModal").addEventListener("click", event => {
@@ -5178,6 +5325,121 @@ def save_dashboard_settings(output_root: Path, payload: dict) -> dict:
     )
     write_json_file(DASHBOARD_SETTINGS_PATH, settings)
     return {"status": "ok", "settings": settings, "path": str(DASHBOARD_SETTINGS_PATH)}
+
+
+def provider_health_report(output_root: Path) -> dict:
+    settings = load_dashboard_settings(output_root)
+    items = [
+        pillow_provider_health(),
+        ffmpeg_provider_health(),
+        faster_whisper_provider_health(),
+        ollama_provider_health(settings),
+        automatic1111_provider_health(settings),
+        comfyui_provider_health(settings),
+        openai_provider_health(settings),
+    ]
+    local_items = [item for item in items if item.get("scope") == "local"]
+    ready_local = sum(1 for item in local_items if item.get("state") == "ready")
+    total_local = len(local_items)
+    return {
+        "status": "ok",
+        "created_at": now_utc(),
+        "summary": {
+            "ready_local": ready_local,
+            "total_local": total_local,
+            "percent": round((ready_local / total_local) * 100) if total_local else 0,
+            "local_first": True,
+        },
+        "items": items,
+    }
+
+
+def provider_item(
+    provider_id: str,
+    label: str,
+    scope: str,
+    state: str,
+    detail: str,
+    action: str,
+    icon: str,
+) -> dict:
+    return {
+        "id": provider_id,
+        "label": label,
+        "scope": scope,
+        "state": state,
+        "detail": detail,
+        "action": action,
+        "icon": icon,
+    }
+
+
+def module_available(name: str) -> bool:
+    return importlib.util.find_spec(name) is not None
+
+
+def pillow_provider_health() -> dict:
+    if module_available("PIL"):
+        return provider_item("pillow", "Pillow image filters", "local", "ready", "本地圖片濾鏡可用：旋轉、亮度、黑白、銳化可直接執行。", "已可使用，不需要雲端。", "image")
+    return provider_item("pillow", "Pillow image filters", "local", "missing", "未偵測到 Pillow；本地圖片濾鏡無法執行。", "安裝 Pillow 後重啟 dashboard。", "image")
+
+
+def ffmpeg_provider_health() -> dict:
+    ffmpeg = shutil.which("ffmpeg")
+    ffprobe = shutil.which("ffprobe")
+    if ffmpeg and ffprobe:
+        return provider_item("ffmpeg", "FFmpeg video runner", "local", "ready", "FFmpeg / FFprobe 可用；本地影片分析與 MP4 輸出可執行。", "已可使用 CPU baseline。", "film")
+    if ffmpeg or ffprobe:
+        return provider_item("ffmpeg", "FFmpeg video runner", "local", "setup", "只偵測到部分 FFmpeg 工具；影片 runner 可能不完整。", "確認 ffmpeg 與 ffprobe 都在 PATH。", "film")
+    return provider_item("ffmpeg", "FFmpeg video runner", "local", "missing", "未偵測到 FFmpeg；影片分析與輸出無法完整執行。", "安裝 FFmpeg 並加入 PATH。", "film")
+
+
+def faster_whisper_provider_health() -> dict:
+    if module_available("faster_whisper"):
+        return provider_item("faster_whisper", "Faster-Whisper ASR", "local", "ready", "本地 ASR 套件可用；後續可接語音轉文字流程。", "可先走 CPU int8，本地加速再接 ONNX/DirectML/QNN。", "audio-lines")
+    return provider_item("faster_whisper", "Faster-Whisper ASR", "local", "missing", "尚未安裝 Faster-Whisper；語音辨識無法本地執行。", "安裝 faster-whisper 或先保持音訊功能未啟用。", "audio-lines")
+
+
+def ollama_provider_health(settings: dict) -> dict:
+    endpoint = str(settings.get("localLlmEndpoint") or DASHBOARD_DEFAULT_SETTINGS["localLlmEndpoint"]).rstrip("/")
+    try:
+        data = http_json("GET", f"{endpoint}/api/tags", timeout=1.5)
+        models = data.get("models") if isinstance(data, dict) else None
+        count = len(models) if isinstance(models, list) else 0
+        return provider_item("ollama", "Ollama local LLM", "local", "ready", f"Ollama API 已連線；可用模型數：{count}。", "可作為 prompt planning 的本地 LLM 路線。", "brain-circuit")
+    except Exception as exc:
+        return provider_item("ollama", "Ollama local LLM", "local", "setup", f"Ollama API 尚未連通：{exc}", "啟動 Ollama，或確認 Local LLM Endpoint 是否正確。", "brain-circuit")
+
+
+def automatic1111_provider_health(settings: dict) -> dict:
+    endpoint = str(settings.get("automatic1111Endpoint") or DASHBOARD_DEFAULT_SETTINGS["automatic1111Endpoint"]).rstrip("/")
+    try:
+        http_json("GET", f"{endpoint}/sdapi/v1/options", timeout=1.5)
+        return provider_item("automatic1111", "Automatic1111 img2img", "local", "ready", "Stable Diffusion WebUI API 已連線；生成式圖片本地路線可用。", "可用於貓變狗、物件替換等 image-to-image。", "sparkles")
+    except Exception as exc:
+        return provider_item("automatic1111", "Automatic1111 img2img", "local", "setup", f"尚未連上 Automatic1111：{exc}", "啟動 WebUI 並加上 --api，確認 endpoint 為 http://127.0.0.1:7860。", "sparkles")
+
+
+def comfyui_provider_health(settings: dict) -> dict:
+    endpoint = str(settings.get("comfyuiEndpoint") or DASHBOARD_DEFAULT_SETTINGS["comfyuiEndpoint"]).rstrip("/")
+    message = comfyui_readiness_message(endpoint)
+    if "no checkpoint" in message or "CheckpointLoaderSimple" in message:
+        return provider_item("comfyui", "ComfyUI image workflow", "local", "setup", message, "安裝 checkpoint 模型，後續再加入 workflow JSON 送件。", "workflow")
+    if "needs a saved" in message:
+        return provider_item("comfyui", "ComfyUI image workflow", "local", "setup", message, "下一步要提供 workflow JSON，才能真正 queue prompt。", "workflow")
+    if message.startswith("ComfyUI unavailable"):
+        return provider_item("comfyui", "ComfyUI image workflow", "local", "setup", message, "啟動 ComfyUI，確認 endpoint 為 http://127.0.0.1:8188。", "workflow")
+    return provider_item("comfyui", "ComfyUI image workflow", "local", "ready", message, "可進入 workflow JSON 串接階段。", "workflow")
+
+
+def openai_provider_health(settings: dict) -> dict:
+    policy = str(settings.get("onlineFallbackPolicy") or "warn_only")
+    api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    if policy == "disabled":
+        return provider_item("openai_images", "OpenAI Images fallback", "cloud", "blocked", "線上 fallback 已關閉；不會自動送雲端。", "這符合 local-first 模式，需要雲端時再手動開啟。", "cloud-off")
+    if api_key:
+        return provider_item("openai_images", "OpenAI Images fallback", "cloud", "cloud", "OPENAI_API_KEY 已設定；雲端圖片 fallback 可用。", "只應在本地 provider 不足且你允許時使用。", "cloud")
+    return provider_item("openai_images", "OpenAI Images fallback", "cloud", "missing", "尚未設定 OPENAI_API_KEY；雲端圖片 fallback 不可用。", "若要使用雲端路線，設定 API key 後重啟 dashboard。", "cloud")
 
 
 def coerce_choice(value: object, allowed: set[str], default: str) -> str:

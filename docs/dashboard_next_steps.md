@@ -18,11 +18,11 @@
 
 ## 下一批施工項目
 
-- [ ] 設定頁新增 provider health cards：Pillow、Automatic1111、ComfyUI、OpenAI key、Ollama、ASR、FFmpeg。
+- [x] 設定頁新增 provider health cards：Pillow、Automatic1111、ComfyUI、OpenAI key、Ollama、ASR、FFmpeg。
 - [ ] 將 image edit provider 抽成明確 registry，回傳每個 provider 的 ready/missing/blocker。
 - [ ] ComfyUI 支援載入 workflow JSON，真正送出 prompt queue 並收回產物。
 - [ ] OpenAI fallback 加上明確確認流程，不在 Auto 模式下暗中送雲端。
-- [ ] 新增「本地化進度」區塊：目前哪些能力已本地、哪些仍需外部服務、下一步如何切回本地。
+- [x] 新增「本地化進度」區塊：目前哪些能力已本地、哪些仍需外部服務、下一步如何切回本地。
 - [ ] 將檔案判斷從前端 MIME/副檔名升級為後端檢測結果回傳，避免瀏覽器 MIME 不準。
 - [x] 將影片上傳後的 queued job 接到真實本地 video edit runner，而不是只保存 input。
 - [x] 影片 job 執行完成後自動刷新 gallery，顯示 `renders/*.mp4`。
@@ -39,12 +39,11 @@
 
 ## 近期優先順序建議
 
-1. Provider health cards 與本地化進度，先讓使用者知道哪些能力已能本地跑、哪些還缺模型/API。
-2. ComfyUI workflow JSON 路由，讓生成式圖片開始有真正本地替代 OpenAI 的路線。
-3. OpenAI fallback 明確確認流程，避免 Auto 模式悄悄送雲端。
-4. 強化影片衣服換色：加入人物/衣服 segmentation + tracking，減少只靠中央區域遮罩的誤差。
-5. 後端回傳媒體檢測結果與適用控制。
-6. Profile 選項由 active platform 生成。
-7. 圖片 before/after 對照。
-8. trash 復原與清空。
-9. 拆分前端模板，降低後續維護成本。
+1. ComfyUI workflow JSON 路由，讓生成式圖片開始有真正本地替代 OpenAI 的路線。
+2. OpenAI fallback 明確確認流程，避免 Auto 模式悄悄送雲端。
+3. 強化影片衣服換色：加入人物/衣服 segmentation + tracking，減少只靠中央區域遮罩的誤差。
+4. 後端回傳媒體檢測結果與適用控制。
+5. Profile 選項由 active platform 生成。
+6. 圖片 before/after 對照。
+7. trash 復原與清空。
+8. 拆分前端模板，降低後續維護成本。
