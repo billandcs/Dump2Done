@@ -20,9 +20,10 @@
 
 - [x] 設定頁新增 provider health cards：Pillow、QNN、Automatic1111、ComfyUI、OpenAI key、Ollama、ASR、FFmpeg。
 - [x] 在 ARM64 Python 路線安裝/註冊 `onnxruntime-qnn`，讓 QNNExecutionProvider readiness 變成真偵測。
-- [ ] 將 image edit provider 抽成明確 registry，回傳每個 provider 的 ready/missing/blocker。
-- [ ] ComfyUI 支援載入 workflow JSON，真正送出 prompt queue 並收回產物。
-- [ ] OpenAI fallback 加上明確確認流程，不在 Auto 模式下暗中送雲端。
+- [x] 將 image edit provider 抽成明確 registry，回傳每個 provider 的 ready/missing/blocker。
+- [x] ComfyUI 支援載入 workflow JSON，真正送出 prompt queue 並收回產物。
+- [x] Auto 模式不暗中送雲端；本地 provider 不足時提示使用者明確選 OpenAI。
+- [x] OpenAI fallback 加上前端確認流程；API key 狀態已在 provider health 顯示。
 - [x] 新增「本地化進度」區塊：目前哪些能力已本地、哪些仍需外部服務、下一步如何切回本地。
 - [ ] 將檔案判斷從前端 MIME/副檔名升級為後端檢測結果回傳，避免瀏覽器 MIME 不準。
 - [x] 將影片上傳後的 queued job 接到真實本地 video edit runner，而不是只保存 input。
@@ -40,8 +41,8 @@
 
 ## 近期優先順序建議
 
-1. ComfyUI workflow JSON 路由，讓生成式圖片開始有真正本地替代 OpenAI 的路線。
-2. OpenAI fallback 明確確認流程，避免 Auto 模式悄悄送雲端。
+1. 安裝/指定 ComfyUI checkpoint，跑一次真實 cat-to-dog smoke test，確認本地生成式圖片輸出可用。
+2. OpenAI fallback 錯誤導引與 API key setup UX，避免使用者誤以為 ChatGPT Pro 等於 API 可用。
 3. 增加 QNN 小型 ONNX smoke test：固定 shape / 量化模型，用來確認 NPU 真的能跑推論，而不是只有 provider 註冊成功。
 4. 強化影片衣服換色：加入人物/衣服 segmentation + tracking，減少只靠中央區域遮罩的誤差。
 5. 後端回傳媒體檢測結果與適用控制。

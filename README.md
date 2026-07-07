@@ -145,10 +145,10 @@ Requests like this are generative and cannot be done by Pillow:
 Dump2Done now routes these requests to real providers:
 
 1. Automatic1111 / Stable Diffusion WebUI
-2. ComfyUI readiness check
-3. OpenAI Images API
+2. ComfyUI image-to-image workflow
+3. OpenAI Images API, only when explicitly selected
 
-The intended order is local first. If no local route is ready, the dashboard reports the real blocker instead of copying the original image and pretending it succeeded. OpenAI Images API is an optional cloud fallback, not the default product direction.
+The intended order is local first. If no local route is ready, the dashboard reports the real blocker instead of copying the original image and pretending it succeeded. Auto mode does not silently upload images to OpenAI; the cloud route must be selected explicitly.
 
 #### Automatic1111 Local Route
 
@@ -184,13 +184,30 @@ Current support:
 
 - detects whether ComfyUI is running
 - checks whether checkpoint models are visible
-- reports missing checkpoint/workflow blockers
+- loads a ComfyUI API-format workflow JSON
+- uploads the source image through `/upload/image`
+- queues the workflow through `/prompt`
+- polls `/history/{prompt_id}`
+- downloads the first generated image through `/view`
+- reports missing checkpoint/workflow blockers as user-facing setup guidance
 
-Not yet implemented:
+Default workflow:
 
-- submitting a full ComfyUI image-to-image workflow JSON
-- loading a saved workflow from settings
-- collecting generated ComfyUI output back into the Dump2Done gallery
+```text
+configs/comfyui_image_to_image_workflow.example.json
+```
+
+The default workflow fills these placeholders automatically:
+
+```text
+{{input_image}}
+{{prompt}}
+{{negative_prompt}}
+{{checkpoint}}
+{{job_id}}
+```
+
+You can point the dashboard setting `ComfyUI Workflow JSON` to an exported ComfyUI API workflow. ComfyUI still needs at least one visible checkpoint model before cat-to-dog or object replacement can run locally.
 
 #### OpenAI Images API Route
 

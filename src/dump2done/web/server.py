@@ -34,6 +34,13 @@ for import_root in (SRC_ROOT, PROJECT_ROOT):
         sys.path.insert(0, str(import_root))
 
 from dump2done.pipeline.video_edit import VideoEditCancelled, run_local_video_edit
+from dump2done.web.image_providers import (
+    DEFAULT_COMFYUI_WORKFLOW_PATH,
+    ImageEditRequest,
+    ImageProviderError,
+    comfyui_readiness_message as image_provider_comfyui_readiness_message,
+    edit_image_with_provider as edit_image_with_provider_registry,
+)
 
 
 STAGE_LABELS = [
@@ -64,6 +71,7 @@ DASHBOARD_DEFAULT_SETTINGS = {
     "imageEditProvider": "auto",
     "automatic1111Endpoint": "http://127.0.0.1:7860",
     "comfyuiEndpoint": "http://127.0.0.1:8188",
+    "comfyuiWorkflowPath": str(DEFAULT_COMFYUI_WORKFLOW_PATH),
     "openaiImageModel": "gpt-image-1.5",
     "asrProvider": "faster_whisper_cpu_demo",
     "onlineFallbackPolicy": "warn_only",
@@ -170,6 +178,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 payload = self._read_json_body()
                 response = create_media_job(self.output_root, payload)
                 self._send_json(response, status=201)
+            except ImageProviderError as exc:
+                self._send_json({"status": "provider_not_ready", "message": str(exc)}, status=422)
             except ValueError as exc:
                 self._send_json({"status": "error", "message": str(exc)}, status=400)
             except Exception as exc:
@@ -838,12 +848,14 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
                 <button class="field-help grid h-5 w-5 place-items-center rounded-full border border-lime-300/35 bg-lime-300/10 text-[11px] font-black text-lime-100 hover:bg-lime-300/20" type="button" data-help-key="imageEditProviderHelp">?</button>
               </span>
               <select id="imageEditProvider" name="imageEditProvider" class="h-11 rounded-lg border border-white/10 bg-black/40 px-3 text-sm text-slate-100 outline-none focus:border-lime-300/70">
-                <option value="auto" data-i18n="imageProviderAuto">Auto：濾鏡用本地，生成式自動找可用服務</option>
+                <option value="auto" data-i18n="imageProviderAuto">Auto：濾鏡用本地，生成式找本地服務</option>
                 <option value="local_a1111" data-i18n="imageProviderA1111">本地 Automatic1111 / Stable Diffusion</option>
+                <option value="local_comfyui" data-i18n="imageProviderComfyUI">本地 ComfyUI workflow</option>
                 <option value="openai" data-i18n="imageProviderOpenAI">雲端 OpenAI Images API</option>
                 <option value="pillow" data-i18n="imageProviderPillow">本地 Pillow 濾鏡</option>
               </select>
               <p class="text-xs leading-5 text-slate-500" data-i18n="imageEditProviderHint">「貓變狗」屬於生成式編輯，需要本地 diffusion server 或 OpenAI API key；Pillow 只做旋轉、亮度、黑白等非生成式處理。</p>
+              <p id="imageRouteDecision" class="rounded-lg border border-white/10 bg-black/25 px-3 py-2 text-xs font-bold leading-5 text-slate-300" data-i18n="imageRouteDecisionIdle">輸入提示後會判斷：本地濾鏡或生成式圖片。</p>
             </label>
             <div class="flex flex-wrap gap-2">
               <button class="prompt-chip rounded-lg border border-orange-300/25 bg-orange-300/10 px-3 py-2 text-xs font-black text-orange-100 hover:bg-orange-300/20" type="button" data-prompt="把貓變成狗，保留照片構圖與背景">貓變狗</button>
@@ -1097,6 +1109,20 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
               </label>
               <label class="grid gap-2">
                 <span class="flex items-center gap-2 text-xs font-black uppercase tracking-wide text-slate-400">
+                  <span data-i18n="comfyuiEndpoint">ComfyUI Endpoint</span>
+                  <button class="compute-help grid h-5 w-5 place-items-center rounded-full border border-lime-300/35 bg-lime-300/10 text-[11px] font-black text-lime-100 hover:bg-lime-300/20" type="button" data-help-key="comfyuiEndpointHelp">?</button>
+                </span>
+                <input id="comfyuiEndpoint" class="h-11 rounded-lg border border-white/10 bg-black/40 px-3 text-sm text-slate-100 outline-none focus:border-lime-300/70" placeholder="http://127.0.0.1:8188">
+              </label>
+              <label class="grid gap-2 md:col-span-2">
+                <span class="flex items-center gap-2 text-xs font-black uppercase tracking-wide text-slate-400">
+                  <span data-i18n="comfyuiWorkflowPath">ComfyUI Workflow JSON</span>
+                  <button class="compute-help grid h-5 w-5 place-items-center rounded-full border border-lime-300/35 bg-lime-300/10 text-[11px] font-black text-lime-100 hover:bg-lime-300/20" type="button" data-help-key="comfyuiWorkflowPathHelp">?</button>
+                </span>
+                <input id="comfyuiWorkflowPath" class="h-11 rounded-lg border border-white/10 bg-black/40 px-3 text-sm text-slate-100 outline-none focus:border-lime-300/70" placeholder="configs/comfyui_image_to_image_workflow.example.json">
+              </label>
+              <label class="grid gap-2">
+                <span class="flex items-center gap-2 text-xs font-black uppercase tracking-wide text-slate-400">
                   <span data-i18n="openaiImageModel">OpenAI Image Model</span>
                   <button class="compute-help grid h-5 w-5 place-items-center rounded-full border border-orange-300/35 bg-orange-300/10 text-[11px] font-black text-orange-100 hover:bg-orange-300/20" type="button" data-help-key="openaiImageModelHelp">?</button>
                 </span>
@@ -1192,11 +1218,15 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         imageModeHelp: "不需要 Profile 或解析度選單。上傳圖片、輸入指令，完成後會匯出 PNG 並在下方顯示完整路徑。",
         imageEditProvider: "生成式圖片路線",
         imageEditProviderHint: "「貓變狗」屬於生成式編輯，需要本地 diffusion server 或 OpenAI API key；Pillow 只做旋轉、亮度、黑白等非生成式處理。",
-        imageProviderAuto: "Auto：濾鏡用本地，生成式自動找可用服務",
+        imageProviderAuto: "Auto：濾鏡用本地，生成式找本地服務",
         imageProviderA1111: "本地 Automatic1111 / Stable Diffusion",
+        imageProviderComfyUI: "本地 ComfyUI workflow",
         imageProviderOpenAI: "雲端 OpenAI Images API",
         imageProviderPillow: "本地 Pillow 濾鏡",
-        imageEditProviderHelp: "圖片分兩種：旋轉、亮度、黑白這類確定性操作會用 Pillow 本地完成；貓變狗、替換物件、生成新內容需要 diffusion 或 OpenAI 這類生成式模型。Auto 會先找本地 Automatic1111，沒有才依 fallback 設定考慮 OpenAI。",
+        imageRouteDecisionIdle: "輸入提示後會判斷：本地濾鏡或生成式圖片。",
+        imageRouteLocal: "這看起來是本地濾鏡：會優先用 Pillow 在本機完成。",
+        imageRouteGenerative: "這看起來是生成式圖片：會優先找本地 Automatic1111 / ComfyUI，不會在 Auto 模式暗中送雲端。",
+        imageEditProviderHelp: "圖片分兩種：旋轉、亮度、黑白這類確定性操作會用 Pillow 本地完成；貓變狗、替換物件、生成新內容需要 diffusion 或 OpenAI 這類生成式模型。Auto 會先找本地 Automatic1111，再找 ComfyUI；若都不可用，會提示你明確切換 OpenAI，不會偷偷送雲端。",
         outputFolder: "輸出資料夾",
         outputComplete: "輸出完成",
         previewOutput: "預覽成品",
@@ -1233,7 +1263,11 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         generativeRequiredTitle: "需要生成式圖片模型",
         generativeRequiredReason: "這個提示不是旋轉、亮度、黑白這類本地濾鏡；它需要 Stable Diffusion、ComfyUI 或 OpenAI Images 這類生成式模型。",
         automatic1111Offline: "Automatic1111 沒有連上：請啟動 WebUI，確認使用 --api，並檢查網址是否為 http://127.0.0.1:7860。",
+        comfyuiOffline: "ComfyUI 沒有連上：請啟動 ComfyUI，確認網址是否為 http://127.0.0.1:8188。",
         comfyuiNoCheckpoint: "ComfyUI 有回應，但目前沒有可用 checkpoint：請安裝模型，或在 ComfyUI 中確認 CheckpointLoaderSimple 看得到模型。",
+        comfyuiWorkflowMissing: "ComfyUI workflow JSON 未就緒：請使用 configs/comfyui_image_to_image_workflow.example.json，或在設定中指定你從 ComfyUI 匯出的 API-format workflow。",
+        cloudExplicitRequired: "Auto 模式不會自動送雲端。若要使用 OpenAI，請在圖片路線明確選 OpenAI Images API。",
+        confirmOpenAIUpload: "你選擇了 OpenAI Images API。這會把圖片與提示詞送到雲端處理。是否繼續？",
         openaiKeyMissing: "OpenAI Images 尚未設定：如果要走雲端 fallback，請設定 OPENAI_API_KEY，並在設定中允許線上 fallback。",
         failureGenericFix: "請調整 prompt、切換 provider，或先部署一個本地生成式圖片服務後重試。",
         interruptedFix: "這個任務已中斷；請重新上傳或建立新任務。",
@@ -1340,6 +1374,8 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         localLlmEndpoint: "Local LLM Endpoint",
         visionProvider: "Vision / Video Provider",
         automatic1111Endpoint: "Automatic1111 Endpoint",
+        comfyuiEndpoint: "ComfyUI Endpoint",
+        comfyuiWorkflowPath: "ComfyUI Workflow JSON",
         openaiImageModel: "OpenAI Image Model",
         asrProvider: "Speech / ASR Provider",
         onlineFallbackPolicy: "Online Fallback Policy",
@@ -1364,6 +1400,8 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         localLlmEndpointHelp: "本地 LLM 服務網址，例如 Ollama 預設是 http://127.0.0.1:11434。未來後端會用它檢查模型列表、送出結構化 prompt、取得剪輯或編輯計畫。現在只保存設定，不會主動連線。",
         visionProviderHelp: "決定圖片/影片視覺處理走哪條路。Local Pillow / FFmpeg MVP 是目前已能本地輸出的基礎版；ONNX DirectML 與 Qualcomm QNN 是本地化目標，會逐步承接 segmentation、tracking、影像模型。線上路線只作為明確 fallback。",
         automatic1111EndpointHelp: "本地 Stable Diffusion WebUI API 位址。若你啟動 AUTOMATIC1111 並開啟 --api，Dump2Done 會用 /sdapi/v1/img2img 做貓變狗、物件替換等 image-to-image。這是目前最實際的本地生成式圖片路線。",
+        comfyuiEndpointHelp: "本地 ComfyUI 服務網址。Dump2Done 會呼叫 /upload/image、/prompt、/history、/view 來上傳圖片、送出 workflow、等待結果並取回圖片。",
+        comfyuiWorkflowPathHelp: "ComfyUI API-format workflow JSON。內建 example 會把上傳圖片放進 LoadImage，並自動填入第一個 checkpoint、prompt、negative prompt；你也可以指定自己從 ComfyUI 匯出的 API workflow。",
         openaiImageModelHelp: "OpenAI Images API 的模型名稱。需要環境變數 OPENAI_API_KEY；ChatGPT Pro 不會自動等於 API key。雲端路線適合本機 diffusion 尚未部署時使用。",
         asrProviderHelp: "決定語音辨識來源。Faster-Whisper CPU local 是目前可在本機跑的路線；ONNX ASR 是本地加速目標；Online ASR fallback 只在本地資源不足且你允許時使用。差別在速度、隱私、模型品質與硬體需求。",
         onlineFallbackPolicyHelp: "控制遇到本地資源做不到時是否可使用線上服務。只提示代表系統只告知需要線上能力，不會自動送出；完全關閉代表永遠不走線上；每次詢問代表未來需要你確認後才會送出。"
@@ -1388,11 +1426,15 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         imageModeHelp: "No profile or resolution menu is needed. Upload an image, enter a prompt, and the PNG output path will appear below.",
         imageEditProvider: "Generative image route",
         imageEditProviderHint: "Cat-to-dog is generative editing. It needs a local diffusion server or an OpenAI API key. Pillow only handles rotation, brightness, grayscale, and similar deterministic edits.",
-        imageProviderAuto: "Auto: local filters, then available generative service",
+        imageProviderAuto: "Auto: local filters, then local generative service",
         imageProviderA1111: "Local Automatic1111 / Stable Diffusion",
+        imageProviderComfyUI: "Local ComfyUI workflow",
         imageProviderOpenAI: "Cloud OpenAI Images API",
         imageProviderPillow: "Local Pillow filters",
-        imageEditProviderHelp: "There are two image paths: deterministic operations such as rotate, brightness, and grayscale run locally with Pillow; cat-to-dog, object replacement, and new visual content need a generative model such as local diffusion or OpenAI. Auto tries local Automatic1111 first, then OpenAI depending on fallback settings.",
+        imageRouteDecisionIdle: "After you type a prompt, this will classify it as a local filter or generative image edit.",
+        imageRouteLocal: "This looks like a local filter. Dump2Done will prefer Pillow on this machine.",
+        imageRouteGenerative: "This looks generative. Dump2Done will try local Automatic1111 / ComfyUI first and will not secretly send Auto jobs to cloud.",
+        imageEditProviderHelp: "There are two image paths: deterministic operations such as rotate, brightness, and grayscale run locally with Pillow; cat-to-dog, object replacement, and new visual content need a generative model. Auto tries local Automatic1111, then ComfyUI. If neither is ready, it asks you to explicitly choose OpenAI instead of silently uploading.",
         outputFolder: "Output Folder",
         outputComplete: "Output Ready",
         previewOutput: "Preview Output",
@@ -1429,7 +1471,11 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         generativeRequiredTitle: "Generative image model required",
         generativeRequiredReason: "This prompt is not a local filter such as rotate, brightness, or grayscale. It needs Stable Diffusion, ComfyUI, or OpenAI Images.",
         automatic1111Offline: "Automatic1111 is not reachable. Start WebUI with --api and verify the endpoint is http://127.0.0.1:7860.",
+        comfyuiOffline: "ComfyUI is not reachable. Start ComfyUI and verify the endpoint is http://127.0.0.1:8188.",
         comfyuiNoCheckpoint: "ComfyUI responded, but no checkpoint is available. Install a model or make sure CheckpointLoaderSimple can see it.",
+        comfyuiWorkflowMissing: "ComfyUI workflow JSON is not ready. Use configs/comfyui_image_to_image_workflow.example.json or point settings to an exported API-format workflow.",
+        cloudExplicitRequired: "Auto mode does not upload to cloud automatically. Choose OpenAI Images API explicitly if you want cloud fallback.",
+        confirmOpenAIUpload: "You selected OpenAI Images API. The image and prompt will be sent to the cloud. Continue?",
         openaiKeyMissing: "OpenAI Images is not configured. Set OPENAI_API_KEY and allow online fallback if you want to use the cloud route.",
         failureGenericFix: "Adjust the prompt, switch provider, or deploy a local generative image service and retry.",
         interruptedFix: "This job was interrupted. Upload again or create a new job.",
@@ -1536,6 +1582,8 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         localLlmEndpoint: "Local LLM Endpoint",
         visionProvider: "Vision / Video Provider",
         automatic1111Endpoint: "Automatic1111 Endpoint",
+        comfyuiEndpoint: "ComfyUI Endpoint",
+        comfyuiWorkflowPath: "ComfyUI Workflow JSON",
         openaiImageModel: "OpenAI Image Model",
         asrProvider: "Speech / ASR Provider",
         onlineFallbackPolicy: "Online Fallback Policy",
@@ -1560,6 +1608,8 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         localLlmEndpointHelp: "The local LLM service URL. Ollama commonly uses http://127.0.0.1:11434. Later the backend can use this to inspect models, send structured prompts, and receive edit plans. For now it is only saved.",
         visionProviderHelp: "Chooses the image/video processing route. Local Pillow / FFmpeg MVP is the current local output path. ONNX DirectML and Qualcomm QNN are local migration targets for segmentation, tracking, and vision models. Online routes are explicit fallback only.",
         automatic1111EndpointHelp: "Local Stable Diffusion WebUI API URL. If AUTOMATIC1111 is running with --api, Dump2Done calls /sdapi/v1/img2img for cat-to-dog, object replacement, and other image-to-image edits. This is the most practical local generative image route right now.",
+        comfyuiEndpointHelp: "Local ComfyUI server URL. Dump2Done calls /upload/image, /prompt, /history, and /view to upload the source image, queue a workflow, wait for completion, and fetch the output.",
+        comfyuiWorkflowPathHelp: "ComfyUI API-format workflow JSON. The built-in example connects the uploaded image to LoadImage and fills the first checkpoint, prompt, and negative prompt automatically. You can point this to your own exported API workflow.",
         openaiImageModelHelp: "OpenAI Images API model name. Requires OPENAI_API_KEY in the environment; ChatGPT Pro does not automatically provide an API key. The cloud route is useful when local diffusion is not deployed yet.",
         asrProviderHelp: "Chooses the speech recognition route. Faster-Whisper CPU local is the current local option; ONNX ASR is the local acceleration target; Online ASR fallback is used only when local resources are not enough and you allow it. The tradeoffs are speed, privacy, quality, and hardware needs.",
         onlineFallbackPolicyHelp: "Controls whether online services may be used when local resources cannot complete a task. Warn only never auto-sends; disabled blocks online fallback; ask each time means future online use requires your confirmation."
@@ -1584,11 +1634,15 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         imageModeHelp: "Profile や解像度メニューは不要です。画像と指示を入力すると PNG を出力し、下にパスを表示します。",
         imageEditProvider: "生成画像ルート",
         imageEditProviderHint: "猫を犬に変える処理は生成式編集です。ローカル diffusion server または OpenAI API key が必要です。Pillow は回転、明るさ、白黒などの確定的編集のみ対応します。",
-        imageProviderAuto: "Auto：フィルターはローカル、生成は利用可能なサービス",
+        imageProviderAuto: "Auto：フィルターはローカル、生成はローカルサービス",
         imageProviderA1111: "ローカル Automatic1111 / Stable Diffusion",
+        imageProviderComfyUI: "ローカル ComfyUI workflow",
         imageProviderOpenAI: "クラウド OpenAI Images API",
         imageProviderPillow: "ローカル Pillow フィルター",
-        imageEditProviderHelp: "画像処理には二種類あります。回転、明るさ、白黒などの確定的処理は Pillow でローカル実行できます。猫を犬にする、物体を置き換える、新しい内容を生成する処理には local diffusion または OpenAI のような生成モデルが必要です。Auto はまず Automatic1111 を探し、fallback 設定に応じて OpenAI を検討します。",
+        imageRouteDecisionIdle: "プロンプト入力後、ローカルフィルターか生成式画像編集かを判定します。",
+        imageRouteLocal: "これはローカルフィルターに見えます。このマシン上の Pillow を優先します。",
+        imageRouteGenerative: "これは生成式編集に見えます。まずローカル Automatic1111 / ComfyUI を試し、Auto では勝手にクラウドへ送りません。",
+        imageEditProviderHelp: "画像処理には二種類あります。回転、明るさ、白黒などの確定的処理は Pillow でローカル実行できます。猫を犬にする、物体を置き換える、新しい内容を生成する処理には生成モデルが必要です。Auto はまず Automatic1111、次に ComfyUI を試します。どちらも未準備なら、OpenAI を明示的に選ぶよう促します。",
         outputFolder: "出力フォルダー",
         outputComplete: "出力完了",
         previewOutput: "出力をプレビュー",
@@ -1625,7 +1679,11 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         generativeRequiredTitle: "生成画像モデルが必要です",
         generativeRequiredReason: "この指示は回転、明るさ、白黒のようなローカルフィルターではなく、Stable Diffusion、ComfyUI、OpenAI Images などの生成モデルが必要です。",
         automatic1111Offline: "Automatic1111 に接続できません。WebUI を --api 付きで起動し、URL が http://127.0.0.1:7860 か確認してください。",
+        comfyuiOffline: "ComfyUI に接続できません。ComfyUI を起動し、URL が http://127.0.0.1:8188 か確認してください。",
         comfyuiNoCheckpoint: "ComfyUI は応答していますが checkpoint がありません。モデルをインストールし、CheckpointLoaderSimple から見えるか確認してください。",
+        comfyuiWorkflowMissing: "ComfyUI workflow JSON が未準備です。configs/comfyui_image_to_image_workflow.example.json を使うか、ComfyUI から書き出した API-format workflow を指定してください。",
+        cloudExplicitRequired: "Auto モードでは自動でクラウドへ送信しません。クラウド fallback を使う場合は OpenAI Images API を明示的に選んでください。",
+        confirmOpenAIUpload: "OpenAI Images API が選択されています。画像とプロンプトをクラウドへ送信します。続行しますか？",
         openaiKeyMissing: "OpenAI Images が未設定です。クラウド fallback を使う場合は OPENAI_API_KEY を設定し、オンライン fallback を許可してください。",
         failureGenericFix: "プロンプトを調整するか、provider を切り替えるか、ローカル生成画像サービスを用意して再試行してください。",
         interruptedFix: "このジョブは中断されました。再アップロードするか新しいジョブを作成してください。",
@@ -1732,6 +1790,8 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         localLlmEndpoint: "Local LLM Endpoint",
         visionProvider: "Vision / Video Provider",
         automatic1111Endpoint: "Automatic1111 Endpoint",
+        comfyuiEndpoint: "ComfyUI Endpoint",
+        comfyuiWorkflowPath: "ComfyUI Workflow JSON",
         openaiImageModel: "OpenAI Image Model",
         asrProvider: "Speech / ASR Provider",
         onlineFallbackPolicy: "Online Fallback Policy",
@@ -1756,6 +1816,8 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         localLlmEndpointHelp: "ローカル LLM サービスの URL です。Ollama は通常 http://127.0.0.1:11434 を使います。将来はモデル一覧確認、構造化 prompt、編集計画の取得に使います。今は保存のみです。",
         visionProviderHelp: "画像/動画処理ルートを決めます。Local Pillow / FFmpeg MVP は現在のローカル出力ルート。ONNX DirectML と Qualcomm QNN は segmentation、tracking、Vision モデルをローカル GPU/NPU へ移す目標です。オンラインは明示的な fallback として扱います。",
         automatic1111EndpointHelp: "ローカル Stable Diffusion WebUI API の URL です。AUTOMATIC1111 を --api 付きで起動すると、Dump2Done は /sdapi/v1/img2img で猫を犬にする、物体置換などの image-to-image 編集を行います。現時点で最も現実的なローカル生成式画像ルートです。",
+        comfyuiEndpointHelp: "ローカル ComfyUI サーバーの URL です。Dump2Done は /upload/image、/prompt、/history、/view を使って元画像をアップロードし、workflow をキューし、完了を待って出力を取得します。",
+        comfyuiWorkflowPathHelp: "ComfyUI API-format workflow JSON です。内蔵 example はアップロード画像を LoadImage に接続し、最初の checkpoint、prompt、negative prompt を自動入力します。ComfyUI から書き出した API workflow に差し替えることもできます。",
         openaiImageModelHelp: "OpenAI Images API のモデル名です。環境変数 OPENAI_API_KEY が必要です。ChatGPT Pro は API key とは別です。ローカル diffusion が未導入の場合のクラウドルートです。",
         asrProviderHelp: "音声認識ルートを決めます。Faster-Whisper CPU local は現在のローカル選択肢、ONNX ASR はローカル高速化目標、Online ASR fallback はローカル資源が足りず許可された場合のみ使います。速度、プライバシー、品質、必要ハードウェアが違います。",
         onlineFallbackPolicyHelp: "ローカル資源だけではできない場合にオンラインサービスを使えるかを制御します。警告のみは自動送信なし、無効化はオンライン禁止、毎回確認はオンライン利用前に確認します。"
@@ -1773,6 +1835,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       imageEditProvider: "auto",
       automatic1111Endpoint: "http://127.0.0.1:7860",
       comfyuiEndpoint: "http://127.0.0.1:8188",
+      comfyuiWorkflowPath: "configs/comfyui_image_to_image_workflow.example.json",
       openaiImageModel: "gpt-image-1.5",
       asrProvider: "faster_whisper_cpu_demo",
       onlineFallbackPolicy: "warn_only"
@@ -1998,6 +2061,8 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       const visionProvider = document.getElementById("visionProvider");
       const imageEditProvider = document.getElementById("imageEditProvider");
       const automatic1111Endpoint = document.getElementById("automatic1111Endpoint");
+      const comfyuiEndpoint = document.getElementById("comfyuiEndpoint");
+      const comfyuiWorkflowPath = document.getElementById("comfyuiWorkflowPath");
       const openaiImageModel = document.getElementById("openaiImageModel");
       const asrProvider = document.getElementById("asrProvider");
       const onlineFallbackPolicy = document.getElementById("onlineFallbackPolicy");
@@ -2013,6 +2078,8 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       if (visionProvider) visionProvider.value = userSettings.visionProvider || DEFAULT_SETTINGS.visionProvider;
       if (imageEditProvider) imageEditProvider.value = userSettings.imageEditProvider || DEFAULT_SETTINGS.imageEditProvider;
       if (automatic1111Endpoint) automatic1111Endpoint.value = userSettings.automatic1111Endpoint || DEFAULT_SETTINGS.automatic1111Endpoint;
+      if (comfyuiEndpoint) comfyuiEndpoint.value = userSettings.comfyuiEndpoint || DEFAULT_SETTINGS.comfyuiEndpoint;
+      if (comfyuiWorkflowPath) comfyuiWorkflowPath.value = userSettings.comfyuiWorkflowPath || DEFAULT_SETTINGS.comfyuiWorkflowPath;
       if (openaiImageModel) openaiImageModel.value = userSettings.openaiImageModel || DEFAULT_SETTINGS.openaiImageModel;
       if (asrProvider) asrProvider.value = userSettings.asrProvider || DEFAULT_SETTINGS.asrProvider;
       if (onlineFallbackPolicy) onlineFallbackPolicy.value = userSettings.onlineFallbackPolicy || DEFAULT_SETTINGS.onlineFallbackPolicy;
@@ -2500,7 +2567,8 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         visionProvider: document.getElementById("visionProvider").value || DEFAULT_SETTINGS.visionProvider,
         imageEditProvider: document.getElementById("imageEditProvider").value || DEFAULT_SETTINGS.imageEditProvider,
         automatic1111Endpoint: document.getElementById("automatic1111Endpoint").value.trim() || DEFAULT_SETTINGS.automatic1111Endpoint,
-        comfyuiEndpoint: DEFAULT_SETTINGS.comfyuiEndpoint,
+        comfyuiEndpoint: document.getElementById("comfyuiEndpoint").value.trim() || DEFAULT_SETTINGS.comfyuiEndpoint,
+        comfyuiWorkflowPath: document.getElementById("comfyuiWorkflowPath").value.trim() || DEFAULT_SETTINGS.comfyuiWorkflowPath,
         openaiImageModel: document.getElementById("openaiImageModel").value.trim() || DEFAULT_SETTINGS.openaiImageModel,
         asrProvider: document.getElementById("asrProvider").value || DEFAULT_SETTINGS.asrProvider,
         onlineFallbackPolicy: document.getElementById("onlineFallbackPolicy").value || DEFAULT_SETTINGS.onlineFallbackPolicy
@@ -2544,8 +2612,11 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       button.addEventListener("click", () => {
         mediaPrompt.value = button.dataset.prompt || "";
         mediaPrompt.focus();
+        updateImageRouteDecision();
       });
     });
+    mediaPrompt.addEventListener("input", updateImageRouteDecision);
+    document.getElementById("imageEditProvider").addEventListener("change", updateImageRouteDecision);
     openMediaResultFolder.addEventListener("click", () => {
       if (lastMediaOutputFolder) openFolder(lastMediaOutputFolder, "media output");
     });
@@ -2701,6 +2772,13 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       const data = Object.fromEntries(new FormData(form).entries());
       const hint = document.getElementById("formHint");
       const submit = document.getElementById("mediaSubmit");
+      const requestedImageProvider = data.imageEditProvider || userSettings.imageEditProvider || "auto";
+      if (selectedMediaItems.some(item => item.type === "image") && requestedImageProvider === "openai") {
+        if (!window.confirm(t("confirmOpenAIUpload"))) {
+          hint.textContent = t("cloudExplicitRequired");
+          return;
+        }
+      }
       hint.textContent = t("readingFile");
       submit.disabled = true;
       try {
@@ -2723,9 +2801,10 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
               model_version: data.modelVersion,
               resolution: detectedType === "image" ? "original" : data.resolution,
               output_directory: data.imageOutputDirectory || userSettings.defaultOutputDirectory,
-              image_edit_provider: detectedType === "image" ? (data.imageEditProvider || userSettings.imageEditProvider || "auto") : "",
+              image_edit_provider: detectedType === "image" ? requestedImageProvider : "",
               automatic1111_endpoint: userSettings.automatic1111Endpoint,
               comfyui_endpoint: userSettings.comfyuiEndpoint,
+              comfyui_workflow_path: userSettings.comfyuiWorkflowPath,
               openai_image_model: userSettings.openaiImageModel,
               online_fallback_policy: userSettings.onlineFallbackPolicy
             })
@@ -2811,14 +2890,52 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       if (text.includes("Automatic1111") || text.includes("WinError 10061") || text.toLowerCase().includes("actively refused")) {
         fixes.push(t("automatic1111Offline"));
       }
+      if (text.includes("ComfyUI") && (text.includes("unavailable") || text.includes("actively refused") || text.includes("No connection") || text.includes("拒絕"))) {
+        fixes.push(t("comfyuiOffline"));
+      }
       if (text.includes("ComfyUI") && (text.includes("checkpoint") || text.includes("CheckpointLoaderSimple"))) {
         fixes.push(t("comfyuiNoCheckpoint"));
+      }
+      if (text.includes("workflow JSON") || text.includes("workflow") && text.includes("不存在")) {
+        fixes.push(t("comfyuiWorkflowMissing"));
+      }
+      if (text.includes("Auto 不會暗中送雲端") || text.includes("Auto mode does not upload") || text.includes("Cloud fallback")) {
+        fixes.push(t("cloudExplicitRequired"));
       }
       if (text.includes("OPENAI_API_KEY") || text.includes("OpenAI Images API unavailable")) {
         fixes.push(t("openaiKeyMissing"));
       }
       if (!fixes.length) fixes.push(t("failureGenericFix"));
       return { title, reason, fixes };
+    }
+
+    function promptNeedsGenerativeImageModel(prompt) {
+      const text = String(prompt || "").toLowerCase();
+      if (text.includes("貓") && text.includes("狗")) return true;
+      return [
+        "貓變狗", "貓變成狗", "把貓變", "變成狗", "變成貓", "替換", "換成", "改成", "生成", "重新生成", "修掉", "移除",
+        "inpaint", "outpaint", "replace", "turn into", "make it a", "cat to dog", "dog"
+      ].some(token => text.includes(token));
+    }
+
+    function updateImageRouteDecision() {
+      const node = document.getElementById("imageRouteDecision");
+      if (!node) return;
+      const prompt = mediaPrompt.value || "";
+      const provider = document.getElementById("imageEditProvider").value || "auto";
+      const generative = promptNeedsGenerativeImageModel(prompt);
+      node.classList.remove("border-lime-300/25", "bg-lime-300/10", "text-lime-100", "border-orange-300/30", "bg-orange-300/10", "text-orange-100");
+      if (!prompt.trim()) {
+        node.textContent = t("imageRouteDecisionIdle");
+        return;
+      }
+      if (generative) {
+        node.textContent = `${t("imageRouteGenerative")} Provider: ${provider}`;
+        node.classList.add("border-orange-300/30", "bg-orange-300/10", "text-orange-100");
+      } else {
+        node.textContent = `${t("imageRouteLocal")} Provider: ${provider}`;
+        node.classList.add("border-lime-300/25", "bg-lime-300/10", "text-lime-100");
+      }
     }
 
     function updateEditorMode(mediaType) {
@@ -2836,6 +2953,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         if (adaptiveTitle) adaptiveTitle.textContent = t("imageWorkflowTitle");
         if (adaptiveHelp) adaptiveHelp.textContent = t("imageWorkflowHelp");
         hint.textContent = t("imageReadyHint");
+        updateImageRouteDecision();
       } else if (mediaType === "video") {
         imageOptions.classList.add("hidden");
         adaptiveOptions.classList.remove("hidden");
@@ -4683,6 +4801,10 @@ def create_media_job(output_root: Path, payload: dict) -> dict:
         payload.get("comfyui_endpoint") or settings.get("comfyuiEndpoint"),
         DASHBOARD_DEFAULT_SETTINGS["comfyuiEndpoint"],
     )
+    comfyui_workflow_path = coerce_existing_or_project_path(
+        payload.get("comfyui_workflow_path") or settings.get("comfyuiWorkflowPath"),
+        DASHBOARD_DEFAULT_SETTINGS["comfyuiWorkflowPath"],
+    )
     openai_image_model = coerce_short_text(
         payload.get("openai_image_model") or settings.get("openaiImageModel"),
         DASHBOARD_DEFAULT_SETTINGS["openaiImageModel"],
@@ -4757,6 +4879,7 @@ def create_media_job(output_root: Path, payload: dict) -> dict:
             "image_edit_provider": image_edit_provider,
             "automatic1111_endpoint": automatic1111_endpoint,
             "comfyui_endpoint": comfyui_endpoint,
+            "comfyui_workflow_path": str(comfyui_workflow_path),
             "openai_image_model": openai_image_model,
             "online_fallback_policy": online_fallback_policy,
             "input": manifest["input"],
@@ -4773,6 +4896,7 @@ def create_media_job(output_root: Path, payload: dict) -> dict:
             "image_edit_provider": image_edit_provider,
             "automatic1111_endpoint": automatic1111_endpoint,
             "comfyui_endpoint": comfyui_endpoint,
+            "comfyui_workflow_path": str(comfyui_workflow_path),
             "openai_image_model": openai_image_model,
             "online_fallback_policy": online_fallback_policy,
         },
@@ -4783,16 +4907,19 @@ def create_media_job(output_root: Path, payload: dict) -> dict:
     message = ""
     if media_type == "image":
         try:
-            edit_result = edit_image_with_provider(
-                input_path=input_path,
-                renders_dir=renders_dir,
-                prompt=prompt,
-                resolution=resolution,
-                provider=image_edit_provider,
-                automatic1111_endpoint=automatic1111_endpoint,
-                comfyui_endpoint=comfyui_endpoint,
-                openai_image_model=openai_image_model,
-                online_fallback_policy=online_fallback_policy,
+            edit_result = edit_image_with_provider_registry(
+                ImageEditRequest(
+                    input_path=input_path,
+                    renders_dir=renders_dir,
+                    prompt=prompt,
+                    resolution=resolution,
+                    provider=image_edit_provider,
+                    automatic1111_endpoint=automatic1111_endpoint,
+                    comfyui_endpoint=comfyui_endpoint,
+                    comfyui_workflow_path=comfyui_workflow_path,
+                    openai_image_model=openai_image_model,
+                    online_fallback_policy=online_fallback_policy,
+                )
             )
         except Exception as exc:
             manifest["status"] = "failed"
@@ -5278,6 +5405,12 @@ def load_dashboard_settings(output_root: Path) -> dict:
         settings.get("comfyuiEndpoint"),
         DASHBOARD_DEFAULT_SETTINGS["comfyuiEndpoint"],
     )
+    settings["comfyuiWorkflowPath"] = str(
+        coerce_existing_or_project_path(
+            settings.get("comfyuiWorkflowPath"),
+            DASHBOARD_DEFAULT_SETTINGS["comfyuiWorkflowPath"],
+        )
+    )
     settings["openaiImageModel"] = coerce_short_text(
         settings.get("openaiImageModel"),
         DASHBOARD_DEFAULT_SETTINGS["openaiImageModel"],
@@ -5332,6 +5465,12 @@ def save_dashboard_settings(output_root: Path, payload: dict) -> dict:
     settings["comfyuiEndpoint"] = coerce_endpoint(
         payload.get("comfyuiEndpoint"),
         DASHBOARD_DEFAULT_SETTINGS["comfyuiEndpoint"],
+    )
+    settings["comfyuiWorkflowPath"] = str(
+        coerce_existing_or_project_path(
+            payload.get("comfyuiWorkflowPath"),
+            DASHBOARD_DEFAULT_SETTINGS["comfyuiWorkflowPath"],
+        )
     )
     settings["openaiImageModel"] = coerce_short_text(
         payload.get("openaiImageModel"),
@@ -5536,14 +5675,18 @@ def automatic1111_provider_health(settings: dict) -> dict:
 
 def comfyui_provider_health(settings: dict) -> dict:
     endpoint = str(settings.get("comfyuiEndpoint") or DASHBOARD_DEFAULT_SETTINGS["comfyuiEndpoint"]).rstrip("/")
-    message = comfyui_readiness_message(endpoint)
+    workflow_path = coerce_existing_or_project_path(
+        settings.get("comfyuiWorkflowPath"),
+        DASHBOARD_DEFAULT_SETTINGS["comfyuiWorkflowPath"],
+    )
+    message = image_provider_comfyui_readiness_message(endpoint, workflow_path)
     if "no checkpoint" in message or "CheckpointLoaderSimple" in message:
-        return provider_item("comfyui", "ComfyUI image workflow", "local", "setup", message, "安裝 checkpoint 模型，後續再加入 workflow JSON 送件。", "workflow")
-    if "needs a saved" in message:
-        return provider_item("comfyui", "ComfyUI image workflow", "local", "setup", message, "下一步要提供 workflow JSON，才能真正 queue prompt。", "workflow")
+        return provider_item("comfyui", "ComfyUI image workflow", "local", "setup", message, "安裝 checkpoint 模型，並確認 CheckpointLoaderSimple 看得到。", "workflow")
+    if "workflow JSON" in message and ("not ready" in message or "does not exist" in message):
+        return provider_item("comfyui", "ComfyUI image workflow", "local", "setup", message, "在設定中指定 ComfyUI API workflow JSON，或使用專案內建 example。", "workflow")
     if message.startswith("ComfyUI unavailable"):
         return provider_item("comfyui", "ComfyUI image workflow", "local", "setup", message, "啟動 ComfyUI，確認 endpoint 為 http://127.0.0.1:8188。", "workflow")
-    return provider_item("comfyui", "ComfyUI image workflow", "local", "ready", message, "可進入 workflow JSON 串接階段。", "workflow")
+    return provider_item("comfyui", "ComfyUI image workflow", "local", "ready", message, "可用於本地 image-to-image，例如貓變狗、物件替換。", "workflow")
 
 
 def openai_provider_health(settings: dict) -> dict:
@@ -5573,6 +5716,23 @@ def coerce_endpoint(value: object, default: str) -> str:
     if not re.match(r"^https?://", text):
         return default.rstrip("/")
     return text
+
+
+def coerce_existing_or_project_path(value: object, default: str) -> Path:
+    text = coerce_short_text(value, default, 500)
+    candidate = Path(text)
+    if not candidate.is_absolute():
+        candidate = PROJECT_ROOT / candidate
+    try:
+        resolved = candidate.resolve()
+    except OSError:
+        resolved = (PROJECT_ROOT / default).resolve()
+    if resolved.exists():
+        return resolved
+    default_path = Path(default)
+    if not default_path.is_absolute():
+        default_path = PROJECT_ROOT / default_path
+    return default_path.resolve()
 
 
 def image_resolution(path: Path) -> str:
