@@ -3117,7 +3117,6 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
           <button class="group relative ${previewSpacing} block aspect-video w-full overflow-hidden rounded-lg border border-white/10 bg-black/45 text-left" onclick="playArtifactById('${safeId}')" title="${safeName}">
             <img src="${safeUrl}" class="h-full w-full object-contain transition duration-200 group-hover:scale-[1.02]" alt="${safeName}" loading="lazy">
             <span class="absolute left-3 top-3 rounded-md bg-black/70 px-2 py-1 text-xs font-black text-white">${badge}</span>
-            <span class="absolute bottom-3 right-3 rounded-md bg-sky-300/90 px-2 py-1 text-xs font-black text-slate-950">${escapeHtml(t("previewImage"))}</span>
           </button>
         `;
       }
