@@ -31,7 +31,7 @@ Current local-first layers:
 
 | Area | Status | Notes |
 | --- | --- | --- |
-| Local dashboard | Working | Runs at `http://127.0.0.1:8765/`. |
+| Local dashboard | Working | Prefers `http://127.0.0.1:8765/`, and automatically moves to the next free port if it is busy. |
 | Environment report | Working | `/env` runs the local probe and shows platform readiness. |
 | Image upload preview | Working | Supports image preview, prompt entry, output folder selection, and artifact gallery. |
 | Local image filters | Working | Pillow-based rotate, brightness, grayscale, contrast, sharpen, blur, flip, and PNG export. |
@@ -58,6 +58,10 @@ Open:
 ```text
 http://127.0.0.1:8765/
 ```
+
+If port `8765` is already used by another local service, the dashboard automatically tries
+the next free port and prints the actual URL. The same URL is also written to
+`output/dashboard_url.txt`.
 
 On Qualcomm Windows ARM64 machines, use the native ARM64 virtual environment:
 
@@ -96,7 +100,7 @@ The dashboard includes:
 ### Environment Dashboard
 
 ```text
-http://127.0.0.1:8765/env
+http://127.0.0.1:<active-port>/env
 ```
 
 The environment page runs the local probe and summarizes:
@@ -110,7 +114,7 @@ The environment page runs the local probe and summarizes:
 Raw JSON is still available:
 
 ```text
-http://127.0.0.1:8765/env?format=json
+http://127.0.0.1:<active-port>/env?format=json
 ```
 
 ### Deterministic Local Image Editing
@@ -217,6 +221,9 @@ Set an API key before starting the dashboard:
 $env:OPENAI_API_KEY="sk-..."
 python src\dump2done\web\server.py --host 127.0.0.1 --port 8765
 ```
+
+As with the normal dashboard launch, `8765` is only the preferred port. If another
+service already uses it, Dump2Done will print and save the actual fallback URL.
 
 Default image model:
 

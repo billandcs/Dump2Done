@@ -14,6 +14,7 @@ import platform
 import queue
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import threading
@@ -1182,7 +1183,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
     let activeVideoOptionHelpKey = "";
     let providerHealth = null;
     const logLines = [
-      "[dashboard] Booted Dump2Done local control plane on http://127.0.0.1:8765/",
+      "[dashboard] Booted Dump2Done local dashboard at " + window.location.origin + "/",
       "[runner] Qualcomm profile loaded: CPU int8, single worker, ffmpeg libx264",
       "[asr] faster-whisper model=small device=cpu compute_type=int8",
       "[llm] Ollama structured output pending for semantic clip selection",
@@ -6587,16 +6588,68 @@ def page(title: str, body: str) -> str:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run Dump2Done local verification dashboard.")
     parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=8765,
+        help="Preferred dashboard port. If it is busy, Dump2Done automatically tries the next ports.",
+    )
+    parser.add_argument(
+        "--port-scan-limit",
+        type=int,
+        default=40,
+        help="How many sequential ports to try when the preferred port is busy.",
+    )
     parser.add_argument("--output-root", type=Path, default=Path("output/jobs"))
     return parser.parse_args()
+
+
+def port_accepts_connection(host: str, port: int) -> bool:
+    probe_host = "127.0.0.1" if host in {"0.0.0.0", "::"} else host
+    try:
+        with socket.create_connection((probe_host, port), timeout=0.25):
+            return True
+    except OSError:
+        return False
+
+
+def create_dashboard_server(host: str, preferred_port: int, scan_limit: int) -> ThreadingHTTPServer:
+    if preferred_port == 0:
+        return ThreadingHTTPServer((host, 0), DashboardHandler)
+    scan_limit = max(1, scan_limit)
+    last_error: OSError | None = None
+    for port in range(preferred_port, preferred_port + scan_limit):
+        if port_accepts_connection(host, port):
+            continue
+        try:
+            return ThreadingHTTPServer((host, port), DashboardHandler)
+        except OSError as exc:
+            last_error = exc
+            if getattr(exc, "winerror", None) != 10048 and getattr(exc, "errno", None) not in {48, 98, 10048}:
+                raise
+    raise RuntimeError(
+        f"No available dashboard port from {preferred_port} to {preferred_port + scan_limit - 1}."
+    ) from last_error
+
+
+def remember_dashboard_url(url: str) -> None:
+    output_path = PROJECT_ROOT / "output" / "dashboard_url.txt"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(url + "\n", encoding="utf-8")
 
 
 def main() -> int:
     args = parse_args()
     DashboardHandler.output_root = args.output_root
-    server = ThreadingHTTPServer((args.host, args.port), DashboardHandler)
-    print(f"Dump2Done dashboard: http://{args.host}:{args.port}/")
+    server = create_dashboard_server(args.host, args.port, args.port_scan_limit)
+    actual_host, actual_port = server.server_address[:2]
+    if actual_host in {"0.0.0.0", "::"}:
+        actual_host = args.host
+    url = f"http://{actual_host}:{actual_port}/"
+    remember_dashboard_url(url)
+    if actual_port != args.port:
+        print(f"Dump2Done dashboard preferred port {args.port} is busy; using {actual_port}.")
+    print(f"Dump2Done dashboard: {url}")
     server.serve_forever()
     return 0
 
