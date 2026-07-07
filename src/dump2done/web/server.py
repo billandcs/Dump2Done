@@ -1267,6 +1267,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         comfyuiNoCheckpoint: "ComfyUI 有回應，但目前沒有可用 checkpoint：請安裝模型，或在 ComfyUI 中確認 CheckpointLoaderSimple 看得到模型。",
         comfyuiWorkflowMissing: "ComfyUI workflow JSON 未就緒：請使用 configs/comfyui_image_to_image_workflow.example.json，或在設定中指定你從 ComfyUI 匯出的 API-format workflow。",
         cloudExplicitRequired: "Auto 模式不會自動送雲端。若要使用 OpenAI，請在圖片路線明確選 OpenAI Images API。",
+        pillowSemanticUnsupported: "這是局部語意圖片編輯：請使用本地 ComfyUI / Automatic1111，或明確選 OpenAI Images API。Pillow 無法只把頭髮、衣服或特定物件改色。",
         confirmOpenAIUpload: "你選擇了 OpenAI Images API。這會把圖片與提示詞送到雲端處理。是否繼續？",
         openaiKeyMissing: "OpenAI Images 尚未設定：如果要走雲端 fallback，請設定 OPENAI_API_KEY，並在設定中允許線上 fallback。",
         failureGenericFix: "請調整 prompt、切換 provider，或先部署一個本地生成式圖片服務後重試。",
@@ -1475,6 +1476,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         comfyuiNoCheckpoint: "ComfyUI responded, but no checkpoint is available. Install a model or make sure CheckpointLoaderSimple can see it.",
         comfyuiWorkflowMissing: "ComfyUI workflow JSON is not ready. Use configs/comfyui_image_to_image_workflow.example.json or point settings to an exported API-format workflow.",
         cloudExplicitRequired: "Auto mode does not upload to cloud automatically. Choose OpenAI Images API explicitly if you want cloud fallback.",
+        pillowSemanticUnsupported: "This is a targeted semantic image edit. Use local ComfyUI / Automatic1111, or explicitly choose OpenAI Images API. Pillow cannot recolor only hair, clothing, or a specific object.",
         confirmOpenAIUpload: "You selected OpenAI Images API. The image and prompt will be sent to the cloud. Continue?",
         openaiKeyMissing: "OpenAI Images is not configured. Set OPENAI_API_KEY and allow online fallback if you want to use the cloud route.",
         failureGenericFix: "Adjust the prompt, switch provider, or deploy a local generative image service and retry.",
@@ -1683,6 +1685,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         comfyuiNoCheckpoint: "ComfyUI は応答していますが checkpoint がありません。モデルをインストールし、CheckpointLoaderSimple から見えるか確認してください。",
         comfyuiWorkflowMissing: "ComfyUI workflow JSON が未準備です。configs/comfyui_image_to_image_workflow.example.json を使うか、ComfyUI から書き出した API-format workflow を指定してください。",
         cloudExplicitRequired: "Auto モードでは自動でクラウドへ送信しません。クラウド fallback を使う場合は OpenAI Images API を明示的に選んでください。",
+        pillowSemanticUnsupported: "これは局所的な意味ベースの画像編集です。ローカル ComfyUI / Automatic1111、または OpenAI Images API を明示的に選んでください。Pillow は髪、服、特定物体だけの色変更はできません。",
         confirmOpenAIUpload: "OpenAI Images API が選択されています。画像とプロンプトをクラウドへ送信します。続行しますか？",
         openaiKeyMissing: "OpenAI Images が未設定です。クラウド fallback を使う場合は OPENAI_API_KEY を設定し、オンライン fallback を許可してください。",
         failureGenericFix: "プロンプトを調整するか、provider を切り替えるか、ローカル生成画像サービスを用意して再試行してください。",
@@ -2887,6 +2890,9 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
         title = t("generativeRequiredTitle");
         reason = t("generativeRequiredReason");
       }
+      if (text.includes("Pillow") && (text.includes("局部語意") || text.includes("semantic") || text.includes("頭髮") || text.includes("hair"))) {
+        fixes.push(t("pillowSemanticUnsupported"));
+      }
       if (text.includes("Automatic1111") || text.includes("WinError 10061") || text.toLowerCase().includes("actively refused")) {
         fixes.push(t("automatic1111Offline"));
       }
@@ -2922,10 +2928,17 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
     function promptNeedsGenerativeImageModel(prompt) {
       const text = String(prompt || "").toLowerCase();
       if (text.includes("貓") && text.includes("狗")) return true;
+      if (promptTargetsLocalObjectOrPersonRegion(text)) return true;
       return [
         "貓變狗", "貓變成狗", "把貓變", "變成狗", "變成貓", "替換", "換成", "改成", "生成", "重新生成", "修掉", "移除",
-        "inpaint", "outpaint", "replace", "turn into", "make it a", "cat to dog", "dog"
+        "inpaint", "outpaint", "replace", "turn into", "make it a", "cat to dog", "dog", "hair color", "black hair", "recolor hair", "change hair"
       ].some(token => text.includes(token));
+    }
+
+    function promptTargetsLocalObjectOrPersonRegion(text) {
+      const targets = ["頭髮", "髮色", "頭发", "发色", "hair", "衣服", "服裝", "服装", "shirt", "clothes", "clothing", "臉", "脸", "face", "皮膚", "皮肤", "skin", "背景", "background"];
+      const actions = ["變黑", "变黑", "黑色", "變白", "变白", "白色", "變紅", "变红", "紅色", "红色", "變藍", "变蓝", "藍色", "蓝色", "換色", "改色", "染", "換成", "改成", "change", "recolor", "make", "turn", "black", "white", "red", "blue"];
+      return targets.some(token => text.includes(token)) && actions.some(token => text.includes(token));
     }
 
     function updateImageRouteDecision() {

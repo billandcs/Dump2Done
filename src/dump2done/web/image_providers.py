@@ -61,6 +61,8 @@ def prompt_needs_generative_image_model(prompt: str) -> bool:
     text = prompt.lower()
     if "貓" in text and "狗" in text:
         return True
+    if prompt_targets_local_object_or_person_region(text):
+        return True
     generative_tokens = [
         "貓變狗",
         "貓變成狗",
@@ -81,8 +83,66 @@ def prompt_needs_generative_image_model(prompt: str) -> bool:
         "make it a",
         "cat to dog",
         "dog",
+        "hair color",
+        "black hair",
+        "recolor hair",
+        "change hair",
     ]
     return any(token in text for token in generative_tokens)
+
+
+def prompt_targets_local_object_or_person_region(text: str) -> bool:
+    targets = [
+        "頭髮",
+        "髮色",
+        "頭发",
+        "发色",
+        "hair",
+        "衣服",
+        "服裝",
+        "服装",
+        "shirt",
+        "clothes",
+        "clothing",
+        "臉",
+        "脸",
+        "face",
+        "皮膚",
+        "皮肤",
+        "skin",
+        "背景",
+        "background",
+    ]
+    edit_actions = [
+        "變黑",
+        "变黑",
+        "黑色",
+        "變白",
+        "变白",
+        "白色",
+        "變紅",
+        "变红",
+        "紅色",
+        "红色",
+        "變藍",
+        "变蓝",
+        "藍色",
+        "蓝色",
+        "換色",
+        "改色",
+        "染",
+        "換成",
+        "改成",
+        "change",
+        "recolor",
+        "make",
+        "turn",
+        "black",
+        "white",
+        "red",
+        "blue",
+    ]
+    return any(target in text for target in targets) and any(action in text for action in edit_actions)
 
 
 class ImageProviderRegistry:
@@ -96,22 +156,14 @@ class ImageProviderRegistry:
 
         if request.provider == "pillow":
             if needs_generative:
-                raise ImageProviderError(
-                    [
-                        ProviderFailure(
-                            "Pillow",
-                            "不能處理生成式圖片",
-                            "Pillow 只能做旋轉、亮度、黑白、銳化等確定性濾鏡，不能把貓變成狗。",
-                            "改選 Auto、本地 ComfyUI、Automatic1111，或明確選 OpenAI Images API。",
-                        )
-                    ]
-                )
+                raise pillow_cannot_handle_prompt_error()
             result = edit_image_locally(
                 request.input_path,
                 request.renders_dir,
                 request.prompt,
                 request.resolution,
             )
+            reject_noop_local_edit_if_needed(result, request.prompt)
             result["provider"] = "pillow"
             result["provider_route"] = "local_filter"
             return result
@@ -123,6 +175,7 @@ class ImageProviderRegistry:
                 request.prompt,
                 request.resolution,
             )
+            reject_noop_local_edit_if_needed(result, request.prompt)
             result["provider"] = "pillow"
             result["provider_route"] = "local_filter"
             return result
@@ -208,6 +261,36 @@ class ImageProviderRegistry:
             )
 
         raise ImageProviderError(failures)
+
+
+def pillow_cannot_handle_prompt_error() -> ImageProviderError:
+    return ImageProviderError(
+        [
+            ProviderFailure(
+                "Pillow",
+                "不能處理生成式或局部語意編輯",
+                "Pillow 只能做整張圖的旋轉、亮度、黑白、銳化等確定性濾鏡；頭髮變黑、髮色調整、貓變狗、物件替換都需要生成式或分割模型。",
+                "請使用 Auto 讓系統找本地 ComfyUI / Automatic1111，或明確選 OpenAI Images API。",
+            )
+        ]
+    )
+
+
+def reject_noop_local_edit_if_needed(result: dict, prompt: str) -> None:
+    if not prompt.strip():
+        return
+    operations = result.get("operations") or []
+    if operations == ["copy_original_preview"]:
+        raise ImageProviderError(
+            [
+                ProviderFailure(
+                    "Pillow",
+                    "沒有可執行的本地濾鏡",
+                    "這個提示沒有匹配到旋轉、亮度、黑白、銳化、模糊、翻轉等本地確定性操作。為了避免假完成，Dump2Done 不會直接輸出原圖。",
+                    "請改用明確濾鏡指令，或切到本地 ComfyUI / Automatic1111 處理語意圖片編輯。",
+                )
+            ]
+        )
 
 
 def comfyui_readiness_message(endpoint: str, workflow_path: Path | str | None = None) -> str:
