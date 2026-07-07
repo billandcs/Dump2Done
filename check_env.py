@@ -456,12 +456,32 @@ def check_onnxruntime_runtime() -> dict[str, Any]:
         "installed": module_available("onnxruntime"),
         "version": import_version("onnxruntime"),
         "available_providers": [],
+        "qnn_plugin_installed": module_available("onnxruntime_qnn"),
+        "qnn_plugin_registered": False,
+        "qnn_library_path": None,
     }
     if onnxruntime["installed"]:
         try:
             import onnxruntime as ort  # type: ignore
 
-            onnxruntime["available_providers"] = list(ort.get_available_providers())
+            providers = list(ort.get_available_providers())
+            if "QNNExecutionProvider" not in providers and onnxruntime["qnn_plugin_installed"]:
+                try:
+                    import onnxruntime_qnn as qnn  # type: ignore
+
+                    library_path = qnn.get_library_path()
+                    onnxruntime["qnn_library_path"] = library_path
+                    if Path(library_path).exists():
+                        ort.register_execution_provider_library(qnn.get_ep_name(), library_path)
+                        onnxruntime["qnn_plugin_registered"] = True
+                        providers = list(ort.get_available_providers())
+                    else:
+                        onnxruntime["qnn_plugin_error"] = f"QNN provider library not found: {library_path}"
+                except Exception as exc:
+                    onnxruntime["qnn_plugin_error"] = str(exc)
+            else:
+                onnxruntime["qnn_plugin_registered"] = "QNNExecutionProvider" in providers
+            onnxruntime["available_providers"] = providers
         except Exception as exc:
             onnxruntime["error"] = str(exc)
     return onnxruntime

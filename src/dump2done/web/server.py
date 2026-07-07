@@ -10,6 +10,7 @@ import importlib.util
 import json
 import mimetypes
 import os
+import platform
 import queue
 import re
 import shutil
@@ -4004,12 +4005,8 @@ def local_deployment_items(report: dict) -> list[dict[str, str]]:
         },
         {
             "name": "QNN / NPU 加速",
-            "state": "complete" if qualcomm.get("qnn_execution_provider_available") else "setup" if qualcomm.get("is_qualcomm_cpu") else "blocked",
-            "detail": "QNNExecutionProvider 已可用，可接 ONNX 化模型驗證 NPU 路線。"
-            if qualcomm.get("qnn_execution_provider_available")
-            else "尚未偵測到 QNNExecutionProvider；需安裝/驗證 Qualcomm QNN SDK 與支援 QNN 的 ONNX Runtime。"
-            if qualcomm.get("is_qualcomm_cpu")
-            else "非 Qualcomm 平台時不適用。",
+            "state": qnn_deployment_state(qualcomm),
+            "detail": qnn_deployment_detail(qualcomm),
         },
         {
             "name": "DirectML 視覺模型",
@@ -4024,6 +4021,31 @@ def local_deployment_items(report: dict) -> list[dict[str, str]]:
             "detail": "已支援中央區域 deterministic 衣服變白 MVP；精準 segmentation + tracking 尚待接入。",
         },
     ]
+
+
+def qnn_deployment_state(qualcomm: dict) -> str:
+    if not qualcomm.get("is_qualcomm_cpu"):
+        return "blocked"
+    if qualcomm.get("qnn_execution_provider_available"):
+        return "complete"
+    onnxruntime = qualcomm.get("onnxruntime") or {}
+    if onnxruntime.get("installed"):
+        return "setup"
+    return "missing"
+
+
+def qnn_deployment_detail(qualcomm: dict) -> str:
+    if not qualcomm.get("is_qualcomm_cpu"):
+        return "非 Qualcomm 平台時不適用。"
+    onnxruntime = qualcomm.get("onnxruntime") or {}
+    version = onnxruntime.get("version") or "unknown"
+    providers = onnxruntime.get("available_providers") or []
+    provider_text = ", ".join(providers) if providers else "none"
+    if qualcomm.get("qnn_execution_provider_available"):
+        return f"ONNX Runtime {version} 已列出 QNNExecutionProvider，可開始驗證量化 ONNX 模型的 NPU 路線。"
+    if onnxruntime.get("installed"):
+        return f"已安裝 ONNX Runtime {version}，但目前 provider 只有 {provider_text}；需要 onnxruntime-qnn 才能接 QNNExecutionProvider。"
+    return "尚未安裝 onnxruntime-qnn；ARM64 Python 已就緒後，下一步是安裝套件並確認 QNNExecutionProvider 出現在 provider list。"
 
 
 def local_deployment_row(item: dict[str, str]) -> str:
@@ -5334,6 +5356,7 @@ def provider_health_report(output_root: Path) -> dict:
     items = [
         pillow_provider_health(),
         ffmpeg_provider_health(),
+        qnn_provider_health(),
         faster_whisper_provider_health(),
         ollama_provider_health(settings),
         automatic1111_provider_health(settings),
@@ -5380,6 +5403,47 @@ def module_available(name: str) -> bool:
     return importlib.util.find_spec(name) is not None
 
 
+def onnxruntime_runtime_info() -> dict:
+    info = {
+        "installed": module_available("onnxruntime"),
+        "version": "",
+        "available_providers": [],
+        "qnn_plugin_installed": module_available("onnxruntime_qnn"),
+        "qnn_plugin_registered": False,
+        "qnn_library_path": "",
+        "python_machine": platform.machine(),
+        "processor_architecture": os.environ.get("PROCESSOR_ARCHITECTURE") or "",
+        "is_windows_arm64": sys.platform.startswith("win") and platform.machine().lower() in {"arm64", "aarch64"},
+    }
+    if not info["installed"]:
+        return info
+    try:
+        import onnxruntime as ort  # type: ignore
+
+        info["version"] = getattr(ort, "__version__", "")
+        providers = list(ort.get_available_providers())
+        if "QNNExecutionProvider" not in providers and info["qnn_plugin_installed"]:
+            try:
+                import onnxruntime_qnn as qnn  # type: ignore
+
+                library_path = qnn.get_library_path()
+                info["qnn_library_path"] = library_path
+                if Path(library_path).exists():
+                    ort.register_execution_provider_library(qnn.get_ep_name(), library_path)
+                    info["qnn_plugin_registered"] = True
+                    providers = list(ort.get_available_providers())
+                else:
+                    info["qnn_plugin_error"] = f"QNN provider library not found: {library_path}"
+            except Exception as exc:
+                info["qnn_plugin_error"] = str(exc)
+        else:
+            info["qnn_plugin_registered"] = "QNNExecutionProvider" in providers
+        info["available_providers"] = providers
+    except Exception as exc:
+        info["error"] = str(exc)
+    return info
+
+
 def pillow_provider_health() -> dict:
     if module_available("PIL"):
         return provider_item("pillow", "Pillow image filters", "local", "ready", "本地圖片濾鏡可用：旋轉、亮度、黑白、銳化可直接執行。", "已可使用，不需要雲端。", "image")
@@ -5394,6 +5458,54 @@ def ffmpeg_provider_health() -> dict:
     if ffmpeg or ffprobe:
         return provider_item("ffmpeg", "FFmpeg video runner", "local", "setup", "只偵測到部分 FFmpeg 工具；影片 runner 可能不完整。", "確認 ffmpeg 與 ffprobe 都在 PATH。", "film")
     return provider_item("ffmpeg", "FFmpeg video runner", "local", "missing", "未偵測到 FFmpeg；影片分析與輸出無法完整執行。", "安裝 FFmpeg 並加入 PATH。", "film")
+
+
+def qnn_provider_health() -> dict:
+    runtime = onnxruntime_runtime_info()
+    providers = runtime.get("available_providers") or []
+    version = runtime.get("version") or "unknown"
+    provider_text = ", ".join(providers) if providers else "none"
+    if "QNNExecutionProvider" in providers:
+        return provider_item(
+            "onnxruntime_qnn",
+            "QNN / NPU acceleration",
+            "local",
+            "ready",
+            f"ONNX Runtime {version} 已可註冊 QNNExecutionProvider；可開始用固定 shape / 量化 ONNX 模型驗證 NPU 路線。",
+            "下一步接小型 ONNX vision smoke test，再接 segmentation/tracking。",
+            "cpu",
+        )
+    if runtime.get("installed"):
+        plugin_hint = "已安裝 onnxruntime-qnn plugin，但註冊失敗。" if runtime.get("qnn_plugin_installed") else "尚未安裝 onnxruntime-qnn plugin。"
+        error_hint = f" 錯誤：{runtime.get('qnn_plugin_error')}" if runtime.get("qnn_plugin_error") else ""
+        return provider_item(
+            "onnxruntime_qnn",
+            "QNN / NPU acceleration",
+            "local",
+            "setup",
+            f"已偵測 ONNX Runtime {version}，但 provider 只有：{provider_text}。{plugin_hint}{error_hint}",
+            "在 ARM64 Python 3.11 安裝 onnxruntime-qnn，並確認 QNNExecutionProvider 出現在 provider list。",
+            "plug-zap",
+        )
+    if runtime.get("is_windows_arm64"):
+        return provider_item(
+            "onnxruntime_qnn",
+            "QNN / NPU acceleration",
+            "local",
+            "missing",
+            "ARM64 Python 已就緒，但尚未安裝 onnxruntime-qnn；NPU 路線還不能執行。",
+            "執行 pip install onnxruntime-qnn 後重啟 dashboard，再確認 provider list。",
+            "cpu",
+        )
+    return provider_item(
+        "onnxruntime_qnn",
+        "QNN / NPU acceleration",
+        "local",
+        "blocked",
+        "目前 Python 不是 Windows ARM64 native runtime，QNN/NPU 偵測不適用。",
+        "請用 .venv-arm64 啟動 dashboard。",
+        "cpu",
+    )
 
 
 def faster_whisper_provider_health() -> dict:

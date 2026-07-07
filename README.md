@@ -40,9 +40,9 @@ Current local-first layers:
 | Local video runner | MVP | FFmpeg frame extraction, deterministic Pillow frame edits, MP4 render. No true AI segmentation yet. |
 | Live job tracking | Working | SSE log/status stream, active job tracker, cancel request support. |
 | Artifact gallery | Working | Shows produced images, videos, and audio only. JSON/debug files stay in job folders. |
-| Provider health cards | Working | Settings panel checks Pillow, FFmpeg, Faster-Whisper, Ollama, Automatic1111, ComfyUI, and OpenAI key readiness. |
-| Qualcomm platform support | MVP | Qualcomm Windows on ARM is treated as the local-first target; CPU/FFmpeg path is preferred. |
-| QNN / DirectML acceleration | Not implemented | Dashboard can report readiness, but model acceleration is not wired into production tasks yet. |
+| Provider health cards | Working | Settings panel checks Pillow, FFmpeg, QNN, Faster-Whisper, Ollama, Automatic1111, ComfyUI, and OpenAI key readiness. |
+| Qualcomm platform support | MVP | Qualcomm Windows on ARM is treated as the local-first target; native ARM64 Python is preferred. |
+| QNN / DirectML acceleration | Readiness wired | ARM64 dashboard can install/register `onnxruntime-qnn` and report `QNNExecutionProvider`; production models are not routed through QNN yet. |
 | Full AI video editing | Not implemented | Precise clothing/person tracking, segmentation, and high-quality generative video edits are future work. |
 
 ## What Works Today
@@ -68,6 +68,16 @@ On Qualcomm Windows ARM64 machines, use the native ARM64 virtual environment:
 The expected environment report should show `python_machine: ARM64` and
 `likely_emulated_python: false`.
 
+Optional Qualcomm QNN readiness can be installed into the ARM64 virtual environment:
+
+```powershell
+.\.venv-arm64\Scripts\python.exe -m pip install .[qnn]
+.\.venv-arm64\Scripts\python.exe check_env.py --output output\env_report_arm64_qnn.json
+```
+
+When QNN registration is healthy, the report should list `QNNExecutionProvider` under
+`qualcomm_platform.onnxruntime.available_providers`.
+
 The dashboard includes:
 
 - image/video upload
@@ -80,6 +90,7 @@ The dashboard includes:
 - settings panel for local/cloud provider routing
 - local-first provider migration settings
 - provider health cards and local readiness summary
+- QNN provider registration status when running on native Windows ARM64 Python
 - Traditional Chinese default UI, with English/Japanese language switching
 
 ### Environment Dashboard

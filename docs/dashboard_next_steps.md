@@ -18,7 +18,8 @@
 
 ## 下一批施工項目
 
-- [x] 設定頁新增 provider health cards：Pillow、Automatic1111、ComfyUI、OpenAI key、Ollama、ASR、FFmpeg。
+- [x] 設定頁新增 provider health cards：Pillow、QNN、Automatic1111、ComfyUI、OpenAI key、Ollama、ASR、FFmpeg。
+- [x] 在 ARM64 Python 路線安裝/註冊 `onnxruntime-qnn`，讓 QNNExecutionProvider readiness 變成真偵測。
 - [ ] 將 image edit provider 抽成明確 registry，回傳每個 provider 的 ready/missing/blocker。
 - [ ] ComfyUI 支援載入 workflow JSON，真正送出 prompt queue 並收回產物。
 - [ ] OpenAI fallback 加上明確確認流程，不在 Auto 模式下暗中送雲端。
@@ -41,9 +42,10 @@
 
 1. ComfyUI workflow JSON 路由，讓生成式圖片開始有真正本地替代 OpenAI 的路線。
 2. OpenAI fallback 明確確認流程，避免 Auto 模式悄悄送雲端。
-3. 強化影片衣服換色：加入人物/衣服 segmentation + tracking，減少只靠中央區域遮罩的誤差。
-4. 後端回傳媒體檢測結果與適用控制。
-5. Profile 選項由 active platform 生成。
-6. 圖片 before/after 對照。
-7. trash 復原與清空。
-8. 拆分前端模板，降低後續維護成本。
+3. 增加 QNN 小型 ONNX smoke test：固定 shape / 量化模型，用來確認 NPU 真的能跑推論，而不是只有 provider 註冊成功。
+4. 強化影片衣服換色：加入人物/衣服 segmentation + tracking，減少只靠中央區域遮罩的誤差。
+5. 後端回傳媒體檢測結果與適用控制。
+6. Profile 選項由 active platform 生成。
+7. 圖片 before/after 對照。
+8. trash 復原與清空。
+9. 拆分前端模板，降低後續維護成本。

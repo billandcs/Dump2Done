@@ -20,6 +20,9 @@ mvp = [
   "mediapipe>=0.10.0",
   "requests>=2.31.0",
 ]
+qnn = [
+  "onnxruntime-qnn>=2.3.0; sys_platform == 'win32' and platform_machine == 'ARM64' and python_version >= '3.11'",
+]
 dev = [
   "pytest>=8.0.0",
   "ruff>=0.5.0",
