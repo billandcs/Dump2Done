@@ -914,7 +914,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
           <button id="mediaSubmit" class="mt-2 inline-flex h-12 items-center justify-center gap-2 rounded-lg bg-lime-300 px-4 text-sm font-black text-slate-950 hover:bg-lime-200 disabled:cursor-not-allowed disabled:bg-slate-600 disabled:text-slate-300" type="submit">
             <i data-lucide="sparkles" class="h-5 w-5"></i><span data-i18n="createEdit">建立 / 編輯</span>
           </button>
-          <div id="formHint" class="min-h-5 text-xs font-semibold text-slate-400"></div>
+          <div id="formHint" class="min-h-5 min-w-0 text-xs font-semibold text-slate-400"></div>
         </form>
       </article>
 
@@ -2853,7 +2853,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       const info = parseFailureMessage(message);
       const fixes = info.fixes.length ? info.fixes : [t("failureGenericFix")];
       return `
-        <div class="rounded-xl border border-red-300/45 bg-red-950/35 p-4 text-left text-sm text-red-50 shadow-[0_0_32px_rgba(248,113,113,.12)]">
+        <div class="min-w-0 overflow-hidden rounded-xl border border-red-300/45 bg-red-950/35 p-4 text-left text-sm text-red-50 shadow-[0_0_32px_rgba(248,113,113,.12)]">
           <div class="flex items-start gap-3">
             <span class="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-red-300 text-red-950">
               <i data-lucide="triangle-alert" class="h-5 w-5"></i>
@@ -2861,18 +2861,18 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
             <div class="min-w-0">
               <p class="text-base font-black text-red-100">${escapeHtml(t("failureTitle"))}</p>
               <p class="mt-1 text-sm font-black text-white">${escapeHtml(info.title)}</p>
-              <p class="mt-2 leading-6 text-red-100/85">${escapeHtml(info.reason)}</p>
+              <p class="mt-2 break-words leading-6 text-red-100/85">${escapeHtml(info.reason)}</p>
             </div>
           </div>
           <div class="mt-4 rounded-lg border border-red-200/15 bg-black/25 p-3">
             <p class="mb-2 text-xs font-black uppercase tracking-wide text-red-200">${escapeHtml(t("suggestedFix"))}</p>
-            <ul class="grid gap-2 text-sm leading-6 text-slate-100">
-              ${fixes.map(item => `<li class="flex gap-2"><i data-lucide="arrow-right" class="mt-1 h-4 w-4 shrink-0 text-red-200"></i><span>${escapeHtml(item)}</span></li>`).join("")}
+            <ul class="grid min-w-0 gap-2 text-sm leading-6 text-slate-100">
+              ${fixes.map(item => `<li class="flex min-w-0 gap-2"><i data-lucide="arrow-right" class="mt-1 h-4 w-4 shrink-0 text-red-200"></i><span class="min-w-0 break-words">${escapeHtml(item)}</span></li>`).join("")}
             </ul>
           </div>
-          <details class="mt-3 rounded-lg border border-white/10 bg-black/20 p-3 text-xs text-slate-300">
+          <details class="mt-3 min-w-0 rounded-lg border border-white/10 bg-black/20 p-3 text-xs text-slate-300">
             <summary class="cursor-pointer font-black text-slate-200">${escapeHtml(t("technicalDetails"))}</summary>
-            <p class="mt-2 whitespace-pre-wrap break-words font-mono leading-5">${escapeHtml(message || "")}</p>
+            <p class="mt-2 max-h-36 overflow-auto whitespace-pre-wrap break-words font-mono leading-5">${escapeHtml(message || "")}</p>
           </details>
         </div>
       `;
@@ -2882,7 +2882,7 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       const text = String(message || "");
       const fixes = [];
       let title = t("failureTitle");
-      let reason = text || t("failureGenericFix");
+      let reason = shortenFailureReason(text || t("failureGenericFix"));
       if (text.includes("生成式圖片模型") || text.toLowerCase().includes("generative image")) {
         title = t("generativeRequiredTitle");
         reason = t("generativeRequiredReason");
@@ -2907,6 +2907,16 @@ def render_job_control_dashboard(output_root: Path, selected_job_id: str | None)
       }
       if (!fixes.length) fixes.push(t("failureGenericFix"));
       return { title, reason, fixes };
+    }
+
+    function shortenFailureReason(text) {
+      const raw = String(text || "").trim();
+      if (!raw) return t("failureGenericFix");
+      const marker = raw.indexOf(" Provider 診斷：");
+      if (marker > 0) return raw.slice(0, marker).trim();
+      const providerMarker = raw.indexOf("Provider diagnostic:");
+      if (providerMarker > 0) return raw.slice(0, providerMarker).trim();
+      return raw.length > 150 ? `${raw.slice(0, 150).trim()}...` : raw;
     }
 
     function promptNeedsGenerativeImageModel(prompt) {
